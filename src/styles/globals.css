@@ -1,0 +1,240 @@
+@import url("https://fonts.googleapis.com/css2?family=Sixtyfour&display=swap");
+
+@tailwind utilities;
+@tailwind base;
+@tailwind components;
+
+html {
+  scroll-behavior: smooth;
+}
+
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/OpenDyslexic-Regular.woff2") format("woff2"),
+    url("/fonts/OpenDyslexic-Regular.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+}
+
+.default {
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+.opendyslexic {
+  font-family: "OpenDyslexic", sans-serif !important;
+}
+
+@layer base {
+  :root {
+    --color1: #ffffff;
+    --color2: #ffffff;
+    --color3: #ffffff;
+    --black: #000000;
+    --white: #fff;
+    --background: #ffffff;
+    --foreground: #061113;
+    --card: #ffffff;
+    --card-foreground: #1a1a1a;
+    --popover: #f2f2f2;
+    --popover-foreground: #000000;
+    --primary: var(--color1);
+    --border: var(--black);
+    --input: #4d4d4d;
+    --ring: var(--color1);
+    --accent-foreground: var(--color2);
+    --primary-foreground: #ffffff;
+    --secondary: #efefef;
+    --secondary-foreground: #000000;
+    --muted: #DDD5D7;
+    --muted-foreground: #595959;
+    --accent: #111111;
+    --destructive: #732626;
+    --destructive-foreground: #e6e6e6;
+    --radius: 1rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --color1: #e3af06;
+    --color2: #e3af06;
+    --color3: #e3af06;
+    --background: #061113;
+    --foreground: #e4e6e7;
+    --card: #061113;
+    --card-foreground: #e4e6e7;
+    --popover: #061113;
+    --popover-foreground: #e4e6e7;
+    --primary: var(--color1);
+    --border: var(--white);
+    --input: #4d4d4d;
+    --ring: var(--color1);
+    --accent-foreground: var(--color1);
+    --primary-foreground: #ffffff;
+    --secondary: #282828;
+    --secondary-foreground: #ffffff;
+    --muted: #5c5c5c;
+    --muted-foreground: var(--colo1);
+    --accent: #5c5c5c;
+    --destructive: #990000;
+    --destructive-foreground: #e4e6e7;
+    --radius: 1rem;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .monocromatic {
+    filter: grayscale(100%) !important;
+  }
+
+  .protanopia {
+    /* Simula Protanopia (deficiência de vermelho) - reduz vermelho */
+    filter: hue-rotate(20deg) saturate(50%) !important;
+  }
+
+  .deuteranopia {
+    /* Simula Deuteranopia (deficiência de verde) - reduz verde */
+    filter: hue-rotate(90deg) saturate(50%) !important;
+  }
+
+  .tritanopia {
+    /* Simula Tritanopia (deficiência de azul) - reduz azul */
+    filter: hue-rotate(180deg) saturate(50%) !important;
+  }
+
+  .protanomaly {
+    filter: hue-rotate(20deg) saturate(75%) !important;
+  }
+
+  .deuteranomaly {
+    filter: hue-rotate(90deg) saturate(75%) !important;
+  }
+
+  [vw] [vw-access-button] {
+    right: 10px !important;
+  }
+}
+
+.prose-lg p {
+  margin-top: 5px;
+  margin-bottom: 5px;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.bg-color1 {
+  background-color: #5be560;
+}
+
+.bg-color2 {
+  background-color: #b1ffcb;
+}
+
+.bg-color3 {
+  background-color: #fdf9c0;
+}
+
+.bg-color4 {
+  background-color: #b3b3d8;
+}
+
+.bg-color5 {
+  background-color: #2eb6d4;
+}
+
+.destaque {
+  color: var(--color1);
+}
+
+.project-card {
+
+  margin: 8px;
+}
+
+.border {
+  border: 1px solid #ccc;
+}
+
+.p-4 {
+  padding: 16px;
+}
+
+.p-2 {
+  padding: 8px;
+}
+
+.rounded-lg {
+  border-radius: 8px;
+}
+
+.rounded-md {
+  border-radius: 4px;
+}
+
+.shadow-md {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.w-64 {
+  width: 256px;
+}
+
+.w-full {
+  width: 100%;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
+.react-calendar {
+  background-color: var(--background) !important;
+}
+
+.react-calendar__tile:enabled:hover,
+.react-calendar__tile:enabled:focus {
+  background-color: var(--color1) !important;
+  color: var(--white) !important;
+}
+
+.react-calendar__tile--now {
+  background: var(--color2) !important;
+}
+
+.gantt-container {
+  width: 100%;
+  background: var(--background) !important;
+  border: 0px !important;
+}
+.fc-col-header-cell-cushion {
+  color: var(--black) !important;
+
+}
