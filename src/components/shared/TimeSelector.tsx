@@ -1,10 +1,8 @@
-// components/TimeSelector.tsx
-// Componente para seleção de horários disponíveis
 
 import React, { useState, useEffect } from "react";
-import { Button } from "./ui/button";
-import { appointmentService } from "../services/appointment-service";
-import { getAvailableHours } from "../utils";
+import { Button } from "@/components/ui/button";
+import { appointmentService } from "@/services/appointment-service";
+import { getAvailableHours } from "@/lib/utils";
 import { Clock, Check } from "lucide-react";
 
 interface TimeSelectorProps {

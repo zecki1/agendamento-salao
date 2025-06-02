@@ -1,15 +1,51 @@
-export interface User {
+export interface Usuario {
   id: string;
-  name: string;
-  email: string;
+  email: string | null;
+  nomeExibicao: string | null;
 }
 
-export interface Appointment {
+export interface Cliente {
   id: string;
-  userId: string;
-  userName?: string;
-  date: Date;
-  time: string;
-  status: 'pending' | 'confirmed' | 'cancelled';
-  createdAt: Date;
+  nome: string;
+  telefone: string;
+  email?: string;
+  aniversario?: string; // Formato: yyyy-MM-dd
+  proprietarioId: string;
+}
+
+export interface Servico {
+  id: string;
+  nome: string;
+  preco: number;
+  duracao: number;
+  proprietarioId: string;
+}
+
+export interface Profissional {
+  id: string;
+  nome: string;
+  cor: string;
+  proprietarioId?: string;
+}
+
+export interface Agendamento {
+  id: string;
+  clienteId: string;
+  nomeCliente: string;
+  servicoId: string;
+  nomeServico: string;
+  data: string;
+  hora: string;
+  duracao: number;
+  profissionalId: string;
+  nomeProfissional: string;
+  corProfissional: string;
+  custo: number;
+  recorrencia: { frequencia: 'nenhuma' | 'semanal' | 'quinzenal' | 'mensal'; dataFim?: string };
+  status: 'confirmado' | 'pendente';
+  proprietarioId: string;
+  inicio?: Date;
+  fim?: Date;
+  titulo?: string;
+  corFundo?: string;
 }

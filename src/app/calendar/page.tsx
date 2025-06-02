@@ -2,411 +2,665 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { useAppointment } from '@/hooks/useAppointment';
-import { useRouter } from 'next/navigation';
+import { getDocs, collection, addDoc, query, where, doc, getDoc } from 'firebase/firestore';
+import { firestore } from '@/lib/firebase';
+import Head from 'next/head';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
+import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
+import ptLocale from '@fullcalendar/core/locales/pt';
+import { format, addDays, addWeeks, addMonths, getMonth, parse } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import { format, parse, differenceInHours, differenceInDays, startOfDay } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { Clock } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { z } from 'zod';
+import { UserPlusIcon } from 'lucide-react';
+import { TimeSelector } from '@/components/shared/TimeSelector';
+import { DatePicker } from '@/components/shared/date-picker';
+import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
 
-export default function CalendarPage() {
-  const { user } = useAuth();
-  const { appointments, allAppointments, createAppointment, isLoading, error } = useAppointment();
-  const router = useRouter();
-  const [isGuessDialogOpen, setIsGuessDialogOpen] = useState(false);
-  const [isEventDialogOpen, setIsEventDialogOpen] = useState(false);
-  const [isGuessDetailDialogOpen, setIsGuessDetailDialogOpen] = useState(false);
-  const [hasAppointment, setHasAppointment] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [time, setTime] = useState('');
-  const [selectedEventDate, setSelectedEventDate] = useState<Date | null>(null);
-  const [eventDetails, setEventDetails] = useState<{ userName: string; time: string }[]>([]);
-  const [selectedGuess, setSelectedGuess] = useState<{ userName: string; date: Date; time: string } | null>(null);
-  const [gestationalAge, setGestationalAge] = useState<{ weeks: number; days: number }>({ weeks: 37, days: 1 });
+// Esquemas de validação com Zod
+const clienteSchema = z.object({
+  nome: z.string().min(1, 'Nome é obrigatório'),
+  telefone: z.string().min(1, 'Telefone é obrigatório'),
+  email: z.string().email('E-mail inválido').optional().or(z.literal('')),
+  aniversario: z.string().optional().refine(
+    (val) => !val || !isNaN(Date.parse(val)),
+    { message: 'Data de aniversário inválida' }
+  ),
+});
 
+const agendamentoSchema = z.object({
+  clienteId: z.string().min(1, 'Selecione um cliente'),
+  servicoId: z.string().min(1, 'Selecione um serviço'),
+  data: z.string().min(1, 'Data é obrigatória'),
+  hora: z.string().min(1, 'Hora é obrigatória'),
+  duracao: z.number().min(5, 'Duração mínima é 5 minutos').multipleOf(5),
+  profissionalId: z.string().min(1, 'Selecione um profissional'),
+  custo: z.number().min(0, 'Custo deve ser maior ou igual a 0'),
+  recorrencia: z.object({
+    frequencia: z.enum(['nenhuma', 'semanal', 'quinzenal', 'mensal']),
+    dataFim: z.string().optional(),
+  }),
+});
+
+export default function AgendaPage() {
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [servicos, setServicos] = useState<Servico[]>([]);
+  const [profissionais, setProfissionais] = useState<Profissional[]>([]);
+  const [novoCliente, setNovoCliente] = useState({ nome: '', telefone: '', email: '', aniversario: '' });
+  const [novoAgendamento, setNovoAgendamento] = useState({
+    clienteId: '',
+    servicoId: '',
+    data: '',
+    hora: '',
+    duracao: 30,
+    profissionalId: '',
+    custo: 0,
+    recorrencia: { frequencia: 'nenhuma' as const, dataFim: '' },
+  });
+  const [mostrarCadastroCliente, setMostrarCadastroCliente] = useState(false);
+  const [abrirDialogoAgendamento, setAbrirDialogoAgendamento] = useState(false);
+  const [dataClicada, setDataClicada] = useState<Date | null>(null);
+  const [clientesAniversario, setClientesAniversario] = useState<Cliente[]>([]);
+  const [carregandoDados, setCarregandoDados] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+
+  // Verificar autenticação e carregar dados
   useEffect(() => {
-    if (!user) {
-      router.replace('/login');
-    } else if (appointments.length > 0) {
-      setHasAppointment(true);
+    if (authLoading || !isAuthenticated || !user || !user.id) {
+      console.log('Autenticação incompleta:', { authLoading, isAuthenticated, user });
+      setCarregandoDados(false);
+      return;
     }
-  }, [user, appointments, router]);
-
-  useEffect(() => {
-    // Calculate gestational age: 37 weeks and 1 day (260 days) on May 31, 2025
-    const startDate = new Date('2024-09-14'); // May 31, 2025 - 260 days
-    const today = startOfDay(new Date());
-    const daysSinceStart = differenceInDays(today, startDate);
-    const weeks = Math.floor(daysSinceStart / 7);
-    const days = daysSinceStart % 7;
-    setGestationalAge({ weeks, days });
-  }, []);
-
-  const formatName = (name: string) => {
-    if (!name) return 'Anônimo';
-    const trimmedName = name.trim().slice(0, 20);
-    return trimmedName
-      .split(' ')
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(' ');
-  };
-
-  const isTimeRestricted = (selectedDate: Date, time: string, existingTimes: string[]): boolean => {
-    const selectedDateTime = parse(time, 'HH:mm', selectedDate);
-    for (const existingTime of existingTimes) {
-      const existingDateTime = parse(existingTime, 'HH:mm', selectedDate);
-      const hoursDiff = Math.abs(differenceInHours(selectedDateTime, existingDateTime));
-      if (hoursDiff < 2) {
-        return true; // Within 2-hour restriction
+    const verificarUsuario = async () => {
+      try {
+        setCarregandoDados(true);
+        console.log('Verificando usuário:', { uid: user.id, email: user.email });
+        const userDocRef = doc(firestore, 'users', user.id);
+        const userDoc = await getDoc(userDocRef);
+        const userData = userDoc.exists() ? userDoc.data() : null;
+        console.log('Dados do usuário:', userData);
+        if (!userData) {
+          console.warn('Documento do usuário não encontrado para UID:', user.id);
+          setErro('Usuário não encontrado no banco de dados.');
+          return;
+        }
+        await Promise.all([
+          buscarClientes(user.id),
+          buscarServicos(user.id),
+          buscarProfissionais(user.id),
+          buscarAgendamentos(user.id),
+          buscarClientesAniversario(user.id),
+        ]);
+      } catch (error) {
+        console.error('Erro ao carregar dados:', error);
+        setErro('Erro ao carregar dados. Tente novamente.');
+        toast.error('Erro ao carregar dados');
+      } finally {
+        setCarregandoDados(false);
       }
-    }
-    return false;
-  };
+    };
+    verificarUsuario();
+  }, [authLoading, isAuthenticated, user]);
 
-  const isMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
-
-  const handleDateClick = (info: { date: Date }) => {
-    const clickedDate = info.date;
-    const eventsOnDate = allAppointments.filter(
-      (appt) => appt.date.getTime() === clickedDate.getTime()
-    );
-
-    setSelectedEventDate(clickedDate);
-    setEventDetails(
-      eventsOnDate.map((appt) => ({
-        userName: formatName(appt.userName),
-        time: appt.time,
-      }))
-    );
-    setIsEventDialogOpen(true);
-  };
-
-  const handleEventClick = (info: { event: { id: string; title: string; start: Date } }) => {
-    const event = allAppointments.find((appt) => appt.id === info.event.id);
-    if (event && info.event.start) {
-      setSelectedGuess({
-        userName: formatName(event.userName),
-        date: info.event.start,
-        time: event.time,
-      });
-      setSelectedEventDate(info.event.start);
-      setIsGuessDetailDialogOpen(true);
-    }
-  };
-
-  const handleAddGuess = () => {
-    if (!hasAppointment && selectedEventDate) {
-      setSelectedDate(selectedEventDate);
-      setTime('');
-      setIsEventDialogOpen(false);
-      setIsGuessDetailDialogOpen(false);
-      setIsGuessDialogOpen(true);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedDate || !time) return;
-
-    const eventsOnDate = allAppointments.filter(
-      (appt) => appt.date.getTime() === selectedDate.getTime()
-    );
-    const existingTimes = eventsOnDate.map((appt) => appt.time);
-
-    if (existingTimes.includes(time)) {
-      toast.error('Este horário já está reservado. Escolha outro!');
-      return;
-    }
-
-    if (isTimeRestricted(selectedDate, time, existingTimes)) {
-      toast.error('Os palpites devem ter pelo menos 2 horas de diferença. Escolha outro horário!');
-      return;
-    }
-
+  // Buscar clientes
+  const buscarClientes = async (userId: string) => {
     try {
-      await createAppointment(selectedDate, time, user?.name || 'Anônimo');
-      setIsGuessDialogOpen(false);
-      setSelectedDate(null);
-      setTime('');
-      toast.success('Palpite registrado com sucesso!');
-    } catch (err) {
-      console.error('Erro ao criar agendamento:', err);
-      toast.error('Erro ao registrar palpite. Tente novamente.');
+      console.log('Buscando clientes para userId:', userId);
+      const querySnapshot = await getDocs(collection(firestore, 'clients'));
+      const listaClientes = querySnapshot.docs
+        .filter((doc) => doc.data().proprietarioId === userId)
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
+      setClientes(listaClientes);
+      console.log('Clientes encontrados:', listaClientes);
+    } catch (error) {
+      console.error('Erro ao buscar clientes:', error);
+      throw error;
     }
   };
 
-  const validateTime = (value: string) => {
-    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    return timeRegex.test(value);
+  // Buscar clientes com aniversário no mês atual
+  const buscarClientesAniversario = async (userId: string) => {
+    try {
+      console.log('Buscando aniversariantes para userId:', userId);
+      const querySnapshot = await getDocs(collection(firestore, 'clients'));
+      const mesAtual = getMonth(new Date()) + 1; // 1-12
+      const listaAniversario = querySnapshot.docs
+        .filter((doc) => {
+          const cliente = doc.data() as Cliente;
+          if (!cliente.aniversario || cliente.proprietarioId !== userId) return false;
+          const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
+          return mesAniversario === mesAtual;
+        })
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
+      setClientesAniversario(listaAniversario);
+      console.log('Aniversariantes encontrados:', listaAniversario);
+      if (listaAniversario.length > 0) {
+        toast.info(`🎉 ${listaAniversario.length} cliente(s) fazem aniversário este mês!`);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar aniversariantes:', error);
+      throw error;
+    }
   };
 
-  const events = allAppointments.map((appt) => ({
-    id: appt.id,
-    title: isMobile() ? '' : `${formatName(appt.userName)} - ${appt.time}`,
-    start: new Date(
-      appt.date.getFullYear(),
-      appt.date.getMonth(),
-      appt.date.getDate(),
-      parseInt(appt.time.split(':')[0]),
-      parseInt(appt.time.split(':')[1])
-    ),
-    allDay: false,
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
-    textColor: '#ffffff',
-  }));
-
-  const isDateInValidRange = (date: Date) => {
-    const start = new Date('2025-06-01');
-    const end = new Date('2025-07-01');
-    return date >= start && date < end;
+  // Buscar serviços
+  const buscarServicos = async (userId: string) => {
+    try {
+      console.log('Buscando serviços para userId:', userId);
+      const querySnapshot = await getDocs(collection(firestore, 'services'));
+      setServicos(
+        querySnapshot.docs
+          .filter((doc) => doc.data().proprietarioId === userId)
+          .map((doc) => ({ id: doc.id, ...doc.data() } as Servico)),
+      );
+    } catch (error) {
+      console.error('Erro ao buscar serviços:', error);
+      throw error;
+    }
   };
 
-  if (!user) return null;
+  // Buscar profissionais
+  const buscarProfissionais = async (userId: string) => {
+    try {
+      console.log('Buscando profissionais para userId:', userId);
+      const querySnapshot = await getDocs(collection(firestore, 'users'));
+      setProfissionais(
+        querySnapshot.docs
+          .filter((doc) => doc.data().proprietarioId === userId || doc.id === userId)
+          .map((doc) => ({ id: doc.id, ...doc.data() } as Profissional)),
+      );
+    } catch (error) {
+      console.error('Erro ao buscar profissionais:', error);
+      throw error;
+    }
+  };
+
+  // Buscar agendamentos
+  const buscarAgendamentos = async (userId: string) => {
+    try {
+      console.log('Buscando agendamentos para userId:', userId);
+      const querySnapshot = await getDocs(collection(firestore, 'appointments'));
+      setAgendamentos(
+        querySnapshot.docs
+          .filter((doc) => doc.data().proprietarioId === userId)
+          .map((doc) => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              ...data,
+              inicio: new Date(`${data.data}T${data.hora}`),
+              fim: new Date(new Date(`${data.data}T${data.hora}`).getTime() + data.duracao * 60000),
+              titulo: `${data.nomeCliente} - ${data.nomeServico}`,
+              corFundo: data.corProfissional,
+            } as Agendamento;
+          }),
+      );
+    } catch (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      throw error;
+    }
+  };
+
+  // Criar cliente
+  const handleCriarCliente = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log('Tentando cadastrar cliente:', novoCliente);
+    if (!user || !user.id) {
+      console.error('Nenhum usuário autenticado ou ID ausente', { user });
+      toast.error('Erro: Nenhum usuário autenticado');
+      return;
+    }
+    try {
+      const validado = clienteSchema.parse(novoCliente);
+      console.log('Dados validados do cliente:', validado);
+      const docRef = await addDoc(collection(firestore, 'clients'), {
+        ...validado,
+        proprietarioId: user.id,
+      });
+      console.log('Cliente cadastrado com ID:', docRef.id);
+      setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '' });
+      await buscarClientes(user.id);
+      await buscarClientesAniversario(user.id);
+      toast.success('Cliente cadastrado com sucesso!');
+      setMostrarCadastroCliente(false);
+      setAbrirDialogoAgendamento(true); // Volta para o agendamento
+    } catch (error: any) {
+      console.error('Erro ao criar cliente:', error);
+      const mensagemErro = error instanceof z.ZodError
+        ? error.errors.map(e => e.message).join(', ')
+        : error.message || 'Erro ao cadastrar cliente';
+      toast.error(mensagemErro);
+    }
+  };
+
+  // Criar agendamento
+  const handleCriarAgendamento = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log('Tentando criar agendamento:', novoAgendamento);
+    if (!user || !user.id) {
+      console.error('Nenhum usuário autenticado ou ID ausente', { user });
+      toast.error('Erro: Nenhum usuário autenticado');
+      return;
+    }
+    try {
+      const validado = agendamentoSchema.parse(novoAgendamento);
+      console.log('Dados validados do agendamento:', validado);
+      const cliente = clientes.find((c) => c.id === validado.clienteId);
+      const servico = servicos.find((s) => s.id === validado.servicoId);
+      const profissional = profissionais.find((p) => p.id === validado.profissionalId);
+      if (!cliente || !servico || !profissional) {
+        console.error('Dados inválidos:', { cliente, servico, profissional });
+        toast.error('Cliente, serviço ou profissional não encontrado.');
+        return;
+      }
+      const agendamento = {
+        clienteId: validado.clienteId,
+        nomeCliente: cliente.nome,
+        servicoId: validado.servicoId,
+        nomeServico: servico.nome,
+        data: validado.data,
+        hora: validado.hora,
+        duracao: validado.duracao,
+        profissionalId: validado.profissionalId,
+        nomeProfissional: profissional.nome,
+        corProfissional: profissional.cor,
+        custo: validado.custo,
+        recorrencia: validado.recorrencia,
+        status: 'pendente' as const,
+        proprietarioId: user.id,
+      };
+      const docRef = await addDoc(collection(firestore, 'appointments'), agendamento);
+      console.log('Agendamento criado com ID:', docRef.id);
+
+      // Recorrência
+      if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
+        let dataAtual = new Date(validado.data);
+        const dataFim = new Date(validado.recorrencia.dataFim);
+        while (dataAtual < dataFim) {
+          dataAtual =
+            validado.recorrencia.frequencia === 'semanal'
+              ? addDays(dataAtual, 7)
+              : validado.recorrencia.frequencia === 'quinzenal'
+                ? addWeeks(dataAtual, 2)
+                : addMonths(dataAtual, 1);
+          if (dataAtual <= dataFim) {
+            await addDoc(collection(firestore, 'appointments'), {
+              ...agendamento,
+              data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
+              hora: validado.hora,
+            });
+          }
+        }
+      }
+
+      setNovoAgendamento({
+        clienteId: '',
+        servicoId: '',
+        data: '',
+        hora: '',
+        duracao: 30,
+        profissionalId: '',
+        custo: 0,
+        recorrencia: { frequencia: 'nenhuma', dataFim: '' },
+      });
+      await buscarAgendamentos(user.id);
+      toast.success('Agendamento criado com sucesso!');
+      setAbrirDialogoAgendamento(false);
+    } catch (error: any) {
+      console.error('Erro ao criar agendamento:', error);
+      const mensagemErro = error instanceof z.ZodError
+        ? error.errors.map(e => e.message).join(', ')
+        : error.message || 'Erro ao criar agendamento';
+      toast.error(mensagemErro);
+    }
+  };
+
+  // Lidar com clique no calendário
+  const handleDataClique = (info: { date: Date }) => {
+    console.log('Clique na data:', info.date);
+    if (!user || !user.id) {
+      console.error('Nenhum usuário autenticado ou ID ausente', { user });
+      toast.error('Erro: Nenhum usuário autenticado');
+      return;
+    }
+    setDataClicada(info.date);
+    setNovoAgendamento({
+      ...novoAgendamento,
+      data: format(info.date, 'yyyy-MM-dd', { locale: ptBR }),
+      hora: format(info.date, 'HH:mm', { locale: ptBR }),
+    });
+    setAbrirDialogoAgendamento(true);
+  };
+
+  // Resumo financeiro diário
+  const resumoFinanceiroDiario = () => {
+    const hoje = format(new Date(), 'yyyy-MM-dd', { locale: ptBR });
+    const agendamentosDiarios = agendamentos.filter((agendamento) => agendamento.data === hoje);
+    const receitaTotal = agendamentosDiarios.reduce((soma, agendamento) => soma + agendamento.custo, 0);
+    const clientesUnicos = [...new Set(agendamentosDiarios.map((agendamento) => agendamento.clienteId))].length;
+    const receitasProfissionais = profissionais.map((prof) => {
+      const agendamentosProf = agendamentosDiarios.filter(
+        (agendamento) => agendamento.profissionalId === prof.id,
+      );
+      return {
+        nome: prof.nome,
+        receita: agendamentosProf.reduce((soma, agendamento) => soma + agendamento.custo, 0),
+      };
+    });
+    return { receitaTotal, clientesUnicos, receitasProfissionais };
+  };
+
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
+  }
+
+  if (!isAuthenticated || !user) {
+    return <div className="min-h-screen flex items-center justify-center">Por favor, faça login.</div>;
+  }
+
+  if (erro) {
+    return <div className="min-h-screen flex items-center justify-center text-red-500">{erro}</div>;
+  }
+
+  if (carregandoDados) {
+    return <div className="min-h-screen flex items-center justify-center">Carregando dados...</div>;
+  }
 
   return (
-    <div className="flex flex-col min-h-screen p-2 sm:p-4 ">
-      <div className="container mx-auto w-full max-w-6xl flex flex-col gap-4">
-        {/* Bem-vindo ao Jogo do Arthurzinho! */}
-        <Card className="w-full shadow-xl" data-aos="fade-up" data-aos-delay="100">
-          <CardContent className="pt-4 sm:pt-6">
-            <h2 className="text-lg sm:text-xl font-semibold mb-4">Bem-vindo ao palpite do Arthurzinho!</h2>
-            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300">
-              Olá, tudo incrível por aí? 😊 <br />
-              Estou super animado porque logo serei papai! 🎉 O Arthurzinho está a caminho, e quero compartilhar essa alegria com você. Participe da brincadeira: <strong>adivinhe o dia e horário do nascimento!</strong> <br /><br />
-              A previsão é até <strong>30 de junho</strong>. Cada pessoa tem <strong>uma chance</strong> de palpitar. O mais próximo ganha um <strong>brinde especial</strong>! 💝 <br /><br />
-              Vamos celebrar juntos? Faça seu palpite!
-            </p>
-            <p className="text-xs sm:text-sm mt-4" data-aos="fade-up" data-aos-delay="200">
-              Gestação: {gestationalAge.weeks} semanas e {gestationalAge.days} dia{gestationalAge.days !== 1 ? 's' : ''}
-            </p>
-          </CardContent>
-        </Card>
-       
-        {/* Conteúdo Principal */}
-        <div className="flex flex-col lg:flex-row gap-4">
-          {/* Calendário */}
-          <Card className="w-full shadow-xl" data-aos="fade-right" data-aos-delay="400">
-            <CardHeader>
-              <CardTitle className="text-lg sm:text-xl font-semibold">Escolha sua data</CardTitle>
-            </CardHeader>
-            <CardContent className="p-2 sm:p-4 ">
-              <FullCalendar
-                plugins={[dayGridPlugin, interactionPlugin]}
-                initialView="dayGridMonth"
-                initialDate="2025-06-01"
-                locale="pt-br"
-                events={events}
-                dateClick={handleDateClick}
-                eventClick={handleEventClick}
-                headerToolbar={{
-                  left: 'prev,next today',
-                  center: 'title',
-                  right: '',
-                }}
-                height="auto"
-                eventContent={(eventInfo) => (
-                  <div className="flex items-center text-xs overflow-hidden ">
-                    {isMobile() ? (
-                      <Clock className="h-3 w-3" />
-                    ) : (
-                      <>
-                        <Clock className="mr-1 h-3 w-3" />
-                        <span className="truncate">{eventInfo.event.title}</span>
-                      </>
-                    )}
-                  </div>
-                )}
-                dayMaxEvents={3}
-                moreLinkContent="Mais..."
-                moreLinkClick="popover"
-                dayCellClassNames={(arg) =>
-                  isDateInValidRange(arg.date) ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-                }
-                eventClassNames="rounded-md p-1 m-0.5"
-                className=" rounded-lg text-xs border"
-              />
-              {hasAppointment ? (
-                <p className="text-xs sm:text-sm mt-4 text-center" data-aos="fade-up" data-aos-delay="500">
-                  Você já fez seu palpite! Veja os palpites de todos acima.
-                </p>
-              ) : (
-                <p className="text-xs sm:text-sm mt-4 text-center" data-aos="fade-up" data-aos-delay="500">
-                  Clique em uma data para fazer seu palpite!
-                </p>
-              )}
-              {error && (
-                <p className="text-red-500 text-xs mt-4 text-center" data-aos="fade-in" data-aos-delay="600">
-                  {error}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          {/* Texto */}
-          {/* Regras do Jogo */}
-          <Card className="w-full shadow-xl  lg:w-2/3" data-aos="fade-up" data-aos-delay="300">
-            <CardHeader>
-              <CardTitle className="text-lg sm:text-xl font-semibold">Regras do palpite</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="list-disc pl-5 space-y-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300">
-                <li><strong>Um palpite por usuário</strong>: Cada participante pode registrar apenas um palpite para o dia e horário do nascimento do Arthurzinho.</li>
-                <li><strong>Registro do palpite</strong>: Todos os palpites são salvos e podem ser acompanhados ao fazer login na plataforma.</li>
-                <li><strong>Formato do palpite</strong>: Escolha uma data (entre 1º e 30 de junho de 2025) e um horário (HH:mm, com intervalos de 2 horas).</li>
-                <li><strong>Prêmio</strong>: O participante que acertar ou chegar mais próximo ganhará um brinde especial!</li>
-                <li><strong>Visibilidade dos palpites</strong>: Veja os palpites de outros, identificados pelo nome ou apelido.</li>
-                <li><strong>Prazo</strong>: Palpites até 05 de junho de 2025.</li>
-              </ul>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+    <div className="min-h-screen bg-background p-4">
+      <Head>
+        <title>Agenda do Salão</title>
+        <meta name="description" content="Sistema de agendamento para salão de beleza" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </Head>
 
-      {/* Dialog para Novo Palpite */}
-      <Dialog open={isGuessDialogOpen} onOpenChange={setIsGuessDialogOpen} data-aos="zoom-in" data-aos-delay="100">
-        <DialogContent className="shadow-xl max-w-[90vw] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg">Escolha Seu Palpite</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4" data-aos="fade-up" data-aos-delay="200">
-            <div>
-              <Label className="text-xs">Data Selecionada</Label>
-              <Input
-                value={selectedDate ? format(selectedDate, 'PPP', { locale: ptBR }) : ''}
-                readOnly
-                className="border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-            <div>
-              <Label htmlFor="time" className="text-xs">Horário (HH:mm)</Label>
-              <Input
-                id="time"
-                type="text"
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                placeholder="Ex.: 14:30"
-                required
-                pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
-                title="Formato: HH:mm (ex.: 14:30)"
-                className="border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                type="submit"
-                disabled={isLoading || !selectedDate || !validateTime(time)}
-                className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-xs sm:text-sm"
-                data-aos="fade-up"
-                data-aos-delay="300"
-              >
-                {isLoading ? 'Carregando...' : 'Enviar Palpite'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog para Detalhes de Eventos */}
-      <Dialog open={isEventDialogOpen} onOpenChange={setIsEventDialogOpen} data-aos="zoom-in" data-aos-delay="100">
-        <DialogContent className="shadow-xl max-w-[90vw] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg">
-              Palpites para {selectedEventDate ? format(selectedEventDate, 'PPP', { locale: ptBR }) : ''}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Lista de participantes que palpitaram nesta data.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-48 overflow-y-auto py-2">
-            {eventDetails.length > 0 ? (
-              <ul className="space-y-1 text-xs sm:text-sm">
-                {eventDetails.map((detail, index) => (
-                  <li key={index}>
-                    <span className={isMobile() ? 'text-green-600' : ''}>
-                      {detail.userName}
-                    </span>
-                    {' - '}
-                    {detail.time}
+      <main className="max-w-4xl mx-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-bold">Agenda</h1>
+          <div className="flex items-center gap-4">
+            <Button className="flex items-center gap-2" onClick={() => setAbrirDialogoAgendamento(true)}>
+              <UserPlusIcon className="h-4 w-4" /> Cadastrar Cliente
+            </Button>
+            <div className="text-sm">
+              <p><strong>Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}</strong></p>
+              <p>Total do Dia: R${resumoFinanceiroDiario().receitaTotal.toFixed(2)}</p>
+              <p>Clientes Atendidos: {resumoFinanceiroDiario().clientesUnicos}</p>
+              <p>Por Profissional:</p>
+              <ul className="list-disc pl-5">
+                {resumoFinanceiroDiario().receitasProfissionais?.map((prof) => (
+                  <li key={prof.nome}>
+                    {prof.nome}: R${prof.receita.toFixed(2)}
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="text-xs text-gray-500">Nenhum palpite para esta data.</p>
-            )}
+            </div>
           </div>
-          <DialogFooter className="flex flex-col sm:flex-row justify-end gap-2">
-            {!hasAppointment && (
-              <Button
-                onClick={handleAddGuess}
-                className="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-xs sm:text-sm"
-                data-aos="fade-up"
-                data-aos-delay="400"
-              >
-                Adicionar Palpite
-              </Button>
-            )}
-            <Button
-              onClick={() => setIsEventDialogOpen(false)}
-              className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-xs sm:text-sm"
-              data-aos="fade-up"
-              data-aos-delay="400"
-            >
-              Fechar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
 
-      {/* Dialog para Detalhes do Palpite */}
-      <Dialog open={isGuessDetailDialogOpen} onOpenChange={setIsGuessDetailDialogOpen} data-aos="zoom-in" data-aos-delay="100">
-        <DialogContent className="shadow-xl max-w-[90vw] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg">Detalhes do Palpite</DialogTitle>
-          </DialogHeader>
-          {selectedGuess && (
-            <div className="py-2 text-xs sm:text-sm">
-              <p><strong>Nome:</strong> {selectedGuess.userName}</p>
-              <p><strong>Data:</strong> {format(selectedGuess.date, 'PPP', { locale: ptBR })}</p>
-              <p><strong>Horário:</strong> {selectedGuess.time}</p>
+        {/* Notificação de Aniversariantes */}
+        {clientesAniversario.length > 0 && (
+          <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
+            <h2 className="text-lg font-semibold">🎂 Aniversariantes do Mês</h2>
+            <ul className="list-disc pl-5 mt-2">
+              {clientesAniversario.map((cliente) => (
+                <li key={cliente.id}>
+                  {cliente.nome} - {cliente.aniversario ? format(parse(cliente.aniversario, 'yyyy-MM-dd', new Date()), 'dd/MM', { locale: ptBR }) : 'N/A'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Dialogo de Agendamento */}
+        <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>{mostrarCadastroCliente ? 'Cadastrar Cliente' : 'Novo Agendamento'}</DialogTitle>
+              <DialogDescription>
+                {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Crie um novo agendamento selecionando cliente, serviço e horário.'}
+              </DialogDescription>
+            </DialogHeader>
+            {mostrarCadastroCliente ? (
+              <form onSubmit={handleCriarCliente} className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="nome">Nome</Label>
+                  <Input
+                    id="nome"
+                    value={novoCliente.nome}
+                    onChange={(e) => setNovoCliente({ ...novoCliente, nome: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="telefone">Telefone</Label>
+                  <Input
+                    id="telefone"
+                    type="tel"
+                    value={novoCliente.telefone}
+                    onChange={(e) => setNovoCliente({ ...novoCliente, telefone: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="email">E-mail (opcional)</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={novoCliente.email}
+                    onChange={(e) => setNovoCliente({ ...novoCliente, email: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="aniversario">Aniversário (opcional)</Label>
+                  <Input
+                    id="aniversario"
+                    type="date"
+                    value={novoCliente.aniversario}
+                    onChange={(e) => setNovoCliente({ ...novoCliente, aniversario: e.target.value })}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit">Cadastrar</Button>
+                  <Button variant="outline" onClick={() => setMostrarCadastroCliente(false)}>
+                    Voltar
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleCriarAgendamento} className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="clienteId">Cliente</Label>
+                  <div className="flex gap-2">
+                    <Select
+                      value={novoAgendamento.clienteId}
+                      onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, clienteId: value })}
+                      required
+                    >
+                      <SelectTrigger id="clienteId">
+                        <SelectValue placeholder="Selecione o Cliente" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clientes.map((cliente) => (
+                          <SelectItem key={cliente.id} value={cliente.id}>
+                            {cliente.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" onClick={() => setMostrarCadastroCliente(true)}>
+                      Novo Cliente
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="servicoId">Serviço</Label>
+                  <Select
+                    value={novoAgendamento.servicoId}
+                    onValueChange={(value) => {
+                      const servico = servicos.find((s) => s.id === value);
+                      setNovoAgendamento({
+                        ...novoAgendamento,
+                        servicoId: value,
+                        custo: servico?.preco || 0,
+                        duracao: servico?.duracao || 30,
+                      });
+                    }}
+                    required
+                  >
+                    <SelectTrigger id="servicoId">
+                      <SelectValue placeholder="Selecione o Serviço" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {servicos.map((servico) => (
+                        <SelectItem key={servico.id} value={servico.id}>
+                          {servico.nome} - R${servico.preco}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="data">Data</Label>
+                  <DatePicker
+                    date={novoAgendamento.data ? new Date(novoAgendamento.data) : undefined}
+                    setDate={(date) =>
+                      setNovoAgendamento({
+                        ...novoAgendamento,
+                        data: date ? format(date, 'yyyy-MM-dd', { locale: ptBR }) : '',
+                      })
+                    }
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="hora">Hora</Label>
+                  <TimeSelector
+                    selectedDate={novoAgendamento.data ? new Date(novoAgendamento.data) : undefined}
+                    selectedTime={novoAgendamento.hora}
+                    onSelectTime={(hora) => setNovoAgendamento({ ...novoAgendamento, hora: hora || '' })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="duracao">Duração (minutos)</Label>
+                  <Input
+                    id="duracao"
+                    type="number"
+                    value={novoAgendamento.duracao}
+                    onChange={(e) =>
+                      setNovoAgendamento({ ...novoAgendamento, duracao: parseInt(e.target.value) })
+                    }
+                    step="5"
+                    min="5"
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="profissionalId">Profissional</Label>
+                  <Select
+                    value={novoAgendamento.profissionalId}
+                    onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, profissionalId: value })}
+                    required
+                  >
+                    <SelectTrigger id="profissionalId">
+                      <SelectValue placeholder="Selecione o Profissional" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {profissionais.map((prof) => (
+                        <SelectItem key={prof.id} value={prof.id}>
+                          {prof.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="custo">Custo (R$)</Label>
+                  <Input
+                    id="custo"
+                    type="number"
+                    value={novoAgendamento.custo}
+                    onChange={(e) =>
+                      setNovoAgendamento({ ...novoAgendamento, custo: parseFloat(e.target.value) })
+                    }
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="recorrencia">Recorrência</Label>
+                  <Select
+                    value={novoAgendamento.recorrencia.frequencia}
+                    onValueChange={(value) =>
+                      setNovoAgendamento({
+                        ...novoAgendamento,
+                        recorrencia: { ...novoAgendamento.recorrencia, frequencia: value as 'nenhuma' | 'semanal' | 'quinzenal' | 'mensal' },
+                      })
+                    }
+                  >
+                    <SelectTrigger id="recorrencia">
+                      <SelectValue placeholder="Sem Recorrência" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nenhuma">Sem Recorrência</SelectItem>
+                      <SelectItem value="semanal">Semanal</SelectItem>
+                      <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                      <SelectItem value="mensal">Mensal</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {novoAgendamento.recorrencia.frequencia !== 'nenhuma' && (
+                  <div className="grid gap-2">
+                    <Label htmlFor="dataFim">Data Final da Recorrência</Label>
+                    <DatePicker
+                      date={novoAgendamento.recorrencia.dataFim ? new Date(novoAgendamento.recorrencia.dataFim) : undefined}
+                      setDate={(date) =>
+                        setNovoAgendamento({
+                          ...novoAgendamento,
+                          recorrencia: {
+                            ...novoAgendamento.recorrencia,
+                            dataFim: date ? format(date, 'yyyy-MM-dd', { locale: ptBR }) : '',
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                )}
+                <Button type="submit">Agendar</Button>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Visão Semanal */}
+        <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          locale={ptLocale}
+          events={agendamentos}
+          eventContent={(eventInfo) => (
+            <div className="p-1 text-sm" style={{ backgroundColor: eventInfo.event.corFundo, color: 'white' }}>
+              <b>{eventInfo.event.titulo}</b>
             </div>
           )}
-          <DialogFooter className="flex flex-col sm:flex-row justify-end gap-2">
-            {!hasAppointment && (
-              <Button
-                onClick={handleAddGuess}
-                className="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-xs sm:text-sm"
-                data-aos="fade-up"
-                data-aos-delay="400"
-              >
-                Adicionar Palpite
-              </Button>
-            )}
-            <Button
-              onClick={() => setIsGuessDetailDialogOpen(false)}
-              className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-xs sm:text-sm"
-              data-aos="fade-up"
-              data-aos-delay="400"
-            >
-              Fechar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          slotMinTime="08:00:00"
+          slotMaxTime="22:00:00"
+          height="auto"
+          headerToolbar={{
+            left: 'prev,next hoje',
+            center: 'title',
+            right: 'timeGridWeek,timeGridDay',
+          }}
+          dateClick={handleDataClique}
+        />
+      </main>
     </div>
   );
 }

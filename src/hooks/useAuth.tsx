@@ -3,7 +3,22 @@ import { authService } from '@/services/auth-service';
 import { User } from '@/types/tipos-auth';
 import { useRouter } from 'next/navigation';
 
-const AuthContext = createContext<any>(null);
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+  error: string | null;
+  login: (email: string, password: string) => Promise<User>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string
+  ) => Promise<User>;
+  logout: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -102,7 +117,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, isAuthenticated: !!user, loading, error, login, register, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

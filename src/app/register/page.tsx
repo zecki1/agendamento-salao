@@ -15,6 +15,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { toast } from 'sonner';
 
 export default function RegisterPage() {
   const { register, login, loading, error } = useAuth();
@@ -27,27 +28,31 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Tentando registrar:', { name, email, password, confirmPassword });
     try {
       await register(name, email, password, confirmPassword);
       setIsDialogOpen(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao registrar:', err);
+      toast.error(err.message || 'Erro ao registrar');
     }
   };
 
   const handleLogin = async () => {
+    console.log('Tentando login automático:', { email, password });
     try {
       await login(email, password);
       setIsDialogOpen(false);
       router.push('/calendar');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao fazer login automático:', err);
+      toast.error(err.message || 'Erro ao fazer login');
     }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4 ">
-      <div className="w-full  flex flex-col lg:flex-row gap-6 m-12">
+      <div className="w-full flex flex-col lg:flex-row gap-6 m-12">
         {/* Formulário à esquerda */}
         <Card className="w-full lg:w-1/2 shadow-xl" data-aos="fade-right" data-aos-delay="100">
           <CardHeader>
@@ -141,7 +146,7 @@ export default function RegisterPage() {
               <li><strong>Formato do palpite</strong>: Escolha uma data (entre 1º e 20 de junho de 2025) e um horário específico (hora e minuto, no formato HH:mm).</li>
               <li><strong>Prêmio</strong>: O participante que acertar o dia e horário exatos, ou chegar mais perto, ganhará um brinde especial (um presente simbólico, feito com carinho!).</li>
               <li><strong>Visibilidade dos palpites</strong>: Após o login, você poderá visualizar os palpites de outros participantes, identificados pelo nome completo ou apelido registrado.</li>
-              <li><strong>Prazo</strong>: Os palpites devem ser feitos até o dia 05 de junho de 2025, conforme a previsão de nascimento.</li>
+              <li><strong>Prazo</strong>: Os palpites devem be ser feitos até o dia 05 de junho de 2025, conforme a previsão de nascimento.</li>
             </ul>
           </CardContent>
         </Card>
