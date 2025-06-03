@@ -21,6 +21,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-
+/functions
+firebase-messaging-sw.js
+project_structure.txt
 # Firebase  
 .firebaserc

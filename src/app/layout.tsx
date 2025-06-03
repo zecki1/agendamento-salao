@@ -8,6 +8,7 @@ import { initAOS } from '@/lib/aos';
 import '@/styles/globals.css';
 import 'aos/dist/aos.css';
 import Header from '@/components/Header';
+import { Sonner } from '@/components/ui/sonner';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <main className="min-h-screen bg-background">
                 {children}
               </main>
+              <Sonner />
             </AppointmentProvider>
           </AuthProvider>
         </ThemeProvider>

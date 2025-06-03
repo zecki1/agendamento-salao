@@ -3,15 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useAppointment } from '@/hooks/useAppointment';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { firestore } from '@/lib/firebase';
-import Head from 'next/head';
+import { collection, query, where, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { firestore, getFCMToken } from '@/lib/firebase';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ptLocale from '@fullcalendar/core/locales/pt';
-import { format, addDays, addWeeks, addMonths, getMonth, parse, add, getDay } from 'date-fns';
+import { format, addDays, addWeeks, addMonths, getMonth, parse, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -24,7 +23,7 @@ import { UserPlusIcon, Trash2 } from 'lucide-react';
 import { serviceService } from '@/services/service';
 import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
 
-// Zod validation schemas
+// Esquema de validação para clientes
 const clienteSchema = z.object({
   nome: z.string().min(1, 'Nome é obrigatório'),
   telefone: z.string().min(1, 'Telefone é obrigatório'),
@@ -36,6 +35,7 @@ const clienteSchema = z.object({
   cor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use formato #RRGGBB)').optional(),
 });
 
+// Esquema de validação para agendamentos
 const agendamentoSchema = z.object({
   clienteId: z.string().min(1, 'Selecione um cliente'),
   servicoId: z.string().min(1, 'Selecione um serviço'),
@@ -49,17 +49,31 @@ const agendamentoSchema = z.object({
     dataFim: z.string().optional(),
   }).refine(
     (data) => data.frequencia === 'nenhuma' || !!data.dataFim,
-    { message: 'Data final é obrigatória para recorrências', path: ['recorrencia', 'dataFim'] }
+    { message: 'Data final é obrigatória para recorrências', path: ['recorrencia', 'dataFim'] },
   ),
 });
 
 export default function AgendaPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
-  const { appointments, loading: appointmentsLoading, error: appointmentsError, fetchAppointments, createAppointment, updateAppointment, cancelAppointment } = useAppointment();
+  const {
+    appointments,
+    loading: appointmentsLoading,
+    error: appointmentsError,
+    fetchAppointments,
+    createAppointment,
+    updateAppointment,
+    cancelAppointment,
+  } = useAppointment();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [profissionais, setProfissionais] = useState<Profissional[]>([]);
-  const [novoCliente, setNovoCliente] = useState({ nome: '', telefone: '', email: '', aniversario: '', cor: '#3788d8' });
+  const [novoCliente, setNovoCliente] = useState({
+    nome: '',
+    telefone: '',
+    email: '',
+    aniversario: '',
+    cor: '#3788d8',
+  });
   const [novoAgendamento, setNovoAgendamento] = useState({
     clienteId: '',
     servicoId: '',
@@ -77,6 +91,7 @@ export default function AgendaPage() {
   const [clientesAniversario, setClientesAniversario] = useState<Cliente[]>([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(true);
 
   useEffect(() => {
     console.log('Data atual:', new Date().toISOString());
@@ -102,41 +117,39 @@ export default function AgendaPage() {
         }
 
         const tasks = [
-          serviceService.getClientes(user.id)
-            .then((data) => {
-              console.log('Clientes carregados:', data);
-              setClientes(data);
-            })
-            .catch((error) => {
-              console.warn('Erro ao carregar clientes:', error);
-              setClientes([]);
-            }),
-          serviceService.getServicos(user.id)
-            .then((data) => {
-              console.log('Serviços carregados:', data);
-              setServicos(data);
-            })
-            .catch((error) => {
-              console.warn('Erro ao carregar serviços:', error);
-              setServicos([]);
-            }),
-          buscarProfissionais(user.id)
-            .catch((error) => {
-              console.warn('Erro ao carregar profissionais:', error);
-              setProfissionais([]);
-            }),
-          buscarClientesAniversario(user.id)
-            .catch((error) => {
-              console.warn('Erro ao carregar aniversariantes:', error);
-              setClientesAniversario([]);
-            }),
+          serviceService.getClientes(user.id).then((data) => {
+            console.log('Clientes carregados:', data);
+            setClientes(data);
+          }).catch((error) => {
+            console.error('Erro ao carregar clientes:', error);
+            setClientes([]);
+            toast.error('Erro ao carregar clientes.');
+          }),
+          serviceService.getServicos(user.id).then((data) => {
+            console.log('Serviços carregados:', data);
+            setServicos(data);
+          }).catch((error) => {
+            console.error('Erro ao carregar serviços:', error);
+            setServicos([]);
+            toast.error('Erro ao carregar serviços.');
+          }),
+          buscarProfissionais(user.id).catch((error) => {
+            console.error('Erro ao carregar profissionais:', error);
+            setProfissionais([]);
+            toast.error('Erro ao carregar profissionais.');
+          }),
+          buscarClientesAniversario(user.id).catch((error) => {
+            console.error('Erro ao carregar aniversariantes:', error);
+            setClientesAniversario([]);
+            toast.error('Erro ao carregar aniversariantes.');
+          }),
         ];
 
         await Promise.all(tasks);
       } catch (error) {
         console.error('Erro geral ao carregar dados:', error);
         setErro('Erro ao carregar dados. Tente novamente.');
-        toast.error('Erro ao carregar dados');
+        toast.error('Erro ao carregar dados.');
       } finally {
         setCarregandoDados(false);
       }
@@ -144,30 +157,81 @@ export default function AgendaPage() {
     carregarDados();
   }, [authLoading, isAuthenticated, user?.id]);
 
-  const buscarProfissionais = async (userId: string) => {
-    const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
-    const querySnapshot = await getDocs(q);
-    const listaProfissionais = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Profissional));
-    const userDocRef = doc(firestore, 'users', userId);
-    const userDoc = await getDoc(userDocRef);
-    if (userDoc.exists()) {
-      listaProfissionais.push({ id: userId, ...userDoc.data() } as Profissional);
+  const handleEnableNotifications = async () => {
+    if (!user?.id) {
+      toast.error('Erro ao buscar usuário');
+      return;
     }
-    setProfissionais(listaProfissionais);
-    console.log('Profissionais carregados:', listaProfissionais);
+    try {
+      const token = await getFCMToken();
+      console.log('FCM token obtido:', token);
+      if (token) {
+        const tokenRef = doc(collection(firestore, `fcmTokens/${user.id}/tokens`));
+        await setDoc(tokenRef, {
+          token,
+          deviceType: window.navigator.userAgent || 'unknown',
+          timestamp: new Date(),
+          userId: user.id,
+        });
+        console.log('FCM token salvo:', token);
+        toast.success('Notificações ativadas com sucesso!');
+      } else {
+        console.log('Permissão de notificações não concedida ou FCM não suportado.');
+        toast.info('Permissão de notificações não concedida.');
+      }
+    } catch (error) {
+      console.error('Erro ao configurar notificações:', error);
+      toast.error('Não foi possível ativar notificações.');
+    } finally {
+      setShowNotificationPrompt(false);
+    }
+  };
+
+  const buscarProfissionais = async (userId: string) => {
+    try {
+      const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const listaProfissionais = querySnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Profissional));
+
+      // Adicionar o próprio usuário como profissional
+      const userDocRef = doc(firestore, 'users', userId);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        listaProfissionais.push({
+          id: userId,
+          ...userDoc.data(),
+        } as Profissional);
+      }
+
+      console.log('Profissionais carregados:', listaProfissionais);
+      setProfissionais(listaProfissionais); // Corrigido de listaProfissional para listaProfissionais
+    } catch (error) {
+      console.error('Erro ao buscar profissionais:', error);
+      throw error;
+    }
   };
 
   const buscarClientesAniversario = async (userId: string) => {
-    const clientes = await serviceService.getClientes(userId);
-    const mesAtual = getMonth(new Date()) + 1;
-    const listaAniversario = clientes.filter((cliente) => {
-      if (!cliente.aniversario) return false;
-      const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
-      return mesAniversario === mesAtual;
-    });
-    setClientesAniversario(listaAniversario);
-    if (listaAniversario.length > 0) {
-      toast.info(`🎉 ${listaAniversario.length} cliente(s) fazem aniversário este mês!`);
+    try {
+      const clientes = await serviceService.getClientes(userId);
+      console.log('Clientes para aniversariantes:', clientes);
+      const mesAtual = getMonth(new Date()) + 1;
+      const listaAniversario = clientes.filter((cliente) => {
+        if (!cliente.aniversario) return false;
+        const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
+        return mesAniversario === mesAtual;
+      });
+      console.log('Aniversariantes encontrados:', listaAniversario);
+      setClientesAniversario(listaAniversario);
+      if (listaAniversario.length > 0) {
+        toast.info(`🎉 ${listaAniversario.length} cliente(s) fazem aniversário este mês!`);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar clientes aniversariantes:', error);
+      throw error;
     }
   };
 
@@ -187,13 +251,14 @@ export default function AgendaPage() {
           email: validado.email || '',
           aniversario: validado.aniversario || '',
           cor: validado.cor || '#3788d8',
-          recorrencia: 'nenhuma',
           proprietarioId: user.id,
+          receiveNotifications: true,
         },
         user.id,
       );
       setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '', cor: '#3788d8' });
       const clientesData = await serviceService.getClientes(user.id);
+      console.log('Clientes atualizados após criação:', clientesData);
       setClientes(clientesData);
       await buscarClientesAniversario(user.id);
       toast.success('Cliente cadastrado com sucesso!');
@@ -230,9 +295,10 @@ export default function AgendaPage() {
         custo: Number(novoAgendamento.custo) || 0,
         recorrencia: {
           ...novoAgendamento.recorrencia,
-          dataFim: novoAgendamento.recorrencia.frequencia !== 'nenhuma' && !novoAgendamento.recorrencia.dataFim
-            ? format(add(new Date(novoAgendamento.data), { months: 3 }), 'yyyy-MM-dd', { locale: ptBR })
-            : novoAgendamento.recorrencia.dataFim,
+          dataFim:
+            novoAgendamento.recorrencia.frequencia !== 'nenhuma' && !novoAgendamento.recorrencia.dataFim
+              ? format(addDays(new Date(novoAgendamento.data), { months: 3 }), 'yyyy-MM-dd', { locale: ptBR })
+              : novoAgendamento.recorrencia.dataFim,
         },
       };
       console.log('parsedAgendamento:', parsedAgendamento);
@@ -244,7 +310,6 @@ export default function AgendaPage() {
         toast.error('Cliente, serviço ou profissional não encontrado.');
         return;
       }
-      // Parse initial date in America/Sao_Paulo timezone
       const initialDate = parse(validado.data, 'yyyy-MM-dd', new Date());
       console.log('Initial date:', initialDate.toISOString(), 'Day of week:', getDay(initialDate));
       const agendamento: Agendamento = {
@@ -260,8 +325,9 @@ export default function AgendaPage() {
         corCliente: cliente.cor || '#3788d8',
         custo: validado.custo,
         recorrencia: validado.recorrencia,
-        status: 'pendente',
+        status: 'pending',
         proprietarioId: user.id,
+        timestamp: new Date(`${validado.data}T${validado.hora}:00-03:00`).toISOString(),
       };
       if (editandoAgendamento) {
         agendamento.id = editandoAgendamento.id;
@@ -297,9 +363,10 @@ export default function AgendaPage() {
                 ...agendamento,
                 data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
                 hora: validado.hora,
+                timestamp: new Date(`${format(dataAtual, 'yyyy-MM-dd', { locale: ptBR })}T${validado.hora}:00-03:00`).toISOString(),
               };
               console.log('Criando agendamento recorrente:', recurrente);
-              await createAppointment(recurrente);
+              await createAppointment(recorrente);
             }
           }
         }
@@ -320,7 +387,7 @@ export default function AgendaPage() {
     } catch (error: any) {
       console.error('Erro ao salvar agendamento:', error);
       if (error instanceof z.ZodError) {
-        console.log('ZodError details:', error.errors);
+        console.log('ZodError detalhes:', error.errors);
         toast.error(error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', '));
       } else {
         toast.error(error.message || 'Erro ao salvar agendamento');
@@ -374,8 +441,8 @@ export default function AgendaPage() {
       profissionalId: agendamento.profissionalId || '',
       custo: agendamento.custo || 0,
       recorrencia: {
-        frequencia: agendamento.recorrencia.frequencia || 'nenhuma',
-        dataFim: agendamento.recorrencia.dataFim || '',
+        frequencia: agendamento.recorrencia?.frequencia || 'nenhuma',
+        dataFim: agendamento.recorrencia?.dataFim || '',
       },
     });
     setEditandoAgendamento(agendamento);
@@ -394,7 +461,7 @@ export default function AgendaPage() {
       );
       return {
         nome: prof.nome,
-        receita: agendamentosProf.reduce((soma, agendamento) => soma + agendamento.custo, 0),
+        receita: agendamentosProf.reduce((sum, agendamento) => sum + agendamento.custo, 0),
       };
     });
     return { receitaTotal, clientesUnicos, receitasProfissionais };
@@ -409,7 +476,11 @@ export default function AgendaPage() {
   }
 
   if (erro || appointmentsError) {
-    return <div className="min-h-screen flex items-center justify-center text-red-500">{erro || appointmentsError}</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center text-red-500">
+        {erro || appointmentsError?.message || 'Erro desconhecido'}
+      </div>
+    );
   }
 
   if (carregandoDados) {
@@ -419,17 +490,15 @@ export default function AgendaPage() {
   console.log('Estado atual:', { clientes, appointments, servicos, profissionais });
 
   return (
-    <div className="min-h-screen bg-background p-4 flex flex-col">
-      <Head>
-        <title>Agenda do Salão</title>
-        <meta name="description" content="Sistema de agendamento para salão de beleza" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      </Head>
+    <div className="min-h-screen bg-background p-4 sm:p-6 flex flex-col">
+      <title>Agenda do Salão</title>
+      <meta name="description" content="Sistema de agendamento para salão de beleza" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <h1 className="text-2xl font-bold">Agenda</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold">Agenda</h1>
             <Button
               className="flex items-center gap-2 w-full sm:w-auto border text-black dark:text-white"
               onClick={() => {
@@ -469,6 +538,19 @@ export default function AgendaPage() {
           </div>
         </div>
 
+        {showNotificationPrompt && (
+          <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
+            <h2 className="text-lg font-semibold">Ativar Notificações</h2>
+            <p className="mt-2">Deseja ativar notificações para lembretes de agendamentos?</p>
+            <div className="mt-4 flex gap-2">
+              <Button onClick={handleEnableNotifications}>Ativar</Button>
+              <Button variant="outline" onClick={() => setShowNotificationPrompt(false)}>
+                Ignorar
+              </Button>
+            </div>
+          </div>
+        )}
+
         {clientesAniversario.length > 0 && (
           <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
             <h2 className="text-lg font-semibold">🎂 Aniversariantes do Mês</h2>
@@ -486,10 +568,14 @@ export default function AgendaPage() {
         )}
 
         <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
-          <DialogContent className="sm:max-w-[425px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-[90vw] sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {mostrarCadastroCliente ? 'Cadastrar Cliente' : editandoAgendamento ? 'Editar Agendamento' : 'Novo Agendamento'}
+                {mostrarCadastroCliente
+                  ? 'Cadastrar Cliente'
+                  : editandoAgendamento
+                    ? 'Editar Agendamento'
+                    : 'Novo Agendamento'}
               </DialogTitle>
               <DialogDescription>
                 {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Gerencie o agendamento.'}
@@ -544,7 +630,7 @@ export default function AgendaPage() {
                     type="color"
                     value={novoCliente.cor}
                     onChange={(e) => setNovoCliente({ ...novoCliente, cor: e.target.value })}
-                    className="h-10 w-20"
+                    className="h-10 w-auto"
                   />
                 </div>
                 <div className="flex gap-2">
@@ -569,7 +655,7 @@ export default function AgendaPage() {
                       </SelectTrigger>
                       <SelectContent>
                         {clientes.map((cliente) => (
-                          <SelectItem key={cliente.id} value={cliente.id}>
+                          <SelectItem key={cliente.id} value={cliente.id || ''}>
                             {cliente.nome}
                           </SelectItem>
                         ))}
@@ -656,7 +742,11 @@ export default function AgendaPage() {
                     required
                   >
                     <SelectTrigger id="profissionalId">
-                      <SelectValue placeholder={profissionais.length === 0 ? 'Nenhum profissional disponível' : 'Selecione o profissional'} />
+                      <SelectValue
+                        placeholder={
+                          profissionais.length === 0 ? 'Nenhum profissional disponível' : 'Selecione o profissional'
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {profissionais.map((prof) => (
@@ -750,24 +840,29 @@ export default function AgendaPage() {
         </Dialog>
 
         <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
-        <div className="overflow-x-auto w-full">
+        <div className="overflow-x-auto w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView="timeGridWeek"
             locale={ptLocale}
-            events={appointments.map((event) => {
-              const startStr = `${event.data}T${event.hora}:00-03:00`;
-              const start = new Date(startStr);
-              const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
-              return {
-                ...event,
-                extendedProps: event,
-                start: isNaN(start.getTime()) ? null : start,
-                end: isNaN(end.getTime()) ? null : end,
-                title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
-                backgroundColor: event.corCliente || '#3788d8',
-              };
-            }).filter((event): event is Agendamento & { start: Date; end: Date } => event.start !== null && event.end !== null)}
+            events={appointments
+              .map((event) => {
+                const startStr = `${event.data}T${event.hora}:00-03:00`;
+                const start = new Date(startStr);
+                const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
+                return {
+                  ...event,
+                  extendedProps: event,
+                  start: isNaN(start.getTime()) ? null : start,
+                  end: isNaN(end.getTime()) ? null : end,
+                  title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
+                  backgroundColor: event.corCliente || '#3788d8',
+                };
+              })
+              .filter(
+                (event): event is Agendamento & { start: Date; end: Date } =>
+                  event.start !== null && event.end !== null,
+              )}
             eventContent={(info) => (
               <div
                 className="fc-event-main p-1 text-sm sm:text-xs rounded-md"
@@ -791,7 +886,7 @@ export default function AgendaPage() {
             }}
             dateClick={handleDataClique}
             eventClick={handleEventClique}
-            eventDisplay="block"
+            eventDisplay="auto"
             slotLabelFormat={{
               hour: '2-digit',
               minute: '2-digit',
@@ -803,7 +898,6 @@ export default function AgendaPage() {
             }}
             allDaySlot={false}
             timeZone="America/Sao_Paulo"
-            className="bg-white dark:bg-gray-800 rounded-lg shadow-md"
           />
         </div>
       </main>
