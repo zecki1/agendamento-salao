@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { getDocs, collection, addDoc, query, where, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
 import Head from 'next/head';
 import FullCalendar from '@fullcalendar/react';
@@ -20,26 +20,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { UserPlusIcon } from 'lucide-react';
-import { TimeSelector } from '@/components/shared/TimeSelector';
-import { DatePicker } from '@/components/shared/date-picker';
+import { serviceService } from '@/services/service';
+import { appointmentService } from '@/services/appointment-service';
 import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
 
-// Esquemas de validação com Zod
+// Zod validation schemas
 const clienteSchema = z.object({
   nome: z.string().min(1, 'Nome é obrigatório'),
   telefone: z.string().min(1, 'Telefone é obrigatório'),
   email: z.string().email('E-mail inválido').optional().or(z.literal('')),
   aniversario: z.string().optional().refine(
-    (val) => !val || !isNaN(Date.parse(val)),
-    { message: 'Data de aniversário inválida' }
+    (val) => !val || /^\d{4}-\d{2}-\d{2}$/.test(val),
+    { message: 'Data de aniversário inválida (use YYYY-MM-DD)' },
   ),
 });
 
 const agendamentoSchema = z.object({
   clienteId: z.string().min(1, 'Selecione um cliente'),
   servicoId: z.string().min(1, 'Selecione um serviço'),
-  data: z.string().min(1, 'Data é obrigatória'),
-  hora: z.string().min(1, 'Hora é obrigatória'),
+  data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida (use YYYY-MM-DD)'),
+  hora: z.string().regex(/^\d{2}:\d{2}$/, 'Hora inválida (use HH:mm)'),
   duracao: z.number().min(5, 'Duração mínima é 5 minutos').multipleOf(5),
   profissionalId: z.string().min(1, 'Selecione um profissional'),
   custo: z.number().min(0, 'Custo deve ser maior ou igual a 0'),
@@ -73,30 +73,38 @@ export default function AgendaPage() {
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Verificar autenticação e carregar dados
+  // Load data on auth change
   useEffect(() => {
     if (authLoading || !isAuthenticated || !user || !user.id) {
       console.log('Autenticação incompleta:', { authLoading, isAuthenticated, user });
       setCarregandoDados(false);
       return;
     }
-    const verificarUsuario = async () => {
+    const carregarDados = async () => {
       try {
         setCarregandoDados(true);
-        console.log('Verificando usuário:', { uid: user.id, email: user.email });
+        console.log('Carregando dados para usuário:', { id: user.id, email: user.email });
         const userDocRef = doc(firestore, 'users', user.id);
         const userDoc = await getDoc(userDocRef);
-        const userData = userDoc.exists() ? userDoc.data() : null;
-        console.log('Dados do usuário:', userData);
-        if (!userData) {
-          console.warn('Documento do usuário não encontrado para UID:', user.id);
+        if (!userDoc.exists()) {
+          console.warn('Documento do usuário não encontrado para ID:', user.id);
           setErro('Usuário não encontrado no banco de dados.');
+          toast.error('Usuário não encontrado. Por favor, contate o suporte.');
           return;
         }
         await Promise.all([
-          buscarClientes(user.id),
-          buscarServicos(user.id),
-          buscarProfissionais(user.id),
+          serviceService.getClientes(user.id).then((data) => {
+            console.log('Clientes carregados:', data);
+            setClientes(data);
+          }),
+          serviceService.getServicos(user.id).then((data) => {
+            console.log('Serviços carregados:', data);
+            setServicos(data);
+          }),
+          buscarProfissionais(user.id).catch((error) => {
+            console.warn('Erro ao buscar profissionais, continuando com lista vazia:', error);
+            setProfissionais([]); // Continue even if professionals fail
+          }),
           buscarAgendamentos(user.id),
           buscarClientesAniversario(user.id),
         ]);
@@ -108,39 +116,85 @@ export default function AgendaPage() {
         setCarregandoDados(false);
       }
     };
-    verificarUsuario();
+    carregarDados();
   }, [authLoading, isAuthenticated, user]);
 
-  // Buscar clientes
-  const buscarClientes = async (userId: string) => {
+  // Fetch professionals
+  const buscarProfissionais = async (userId: string) => {
     try {
-      console.log('Buscando clientes para userId:', userId);
-      const querySnapshot = await getDocs(collection(firestore, 'clients'));
-      const listaClientes = querySnapshot.docs
-        .filter((doc) => doc.data().proprietarioId === userId)
-        .map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
-      setClientes(listaClientes);
-      console.log('Clientes encontrados:', listaClientes);
+      console.log('Buscando profissionais para userId:', userId);
+      const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const listaProfissionais = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Profissional));
+      const userDocRef = doc(firestore, 'users', userId);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        listaProfissionais.push({ id: userId, ...userDoc.data() } as Profissional);
+      }
+      setProfissionais(listaProfissional);
+      console.log('Profissionais encontrados:', listaProfissional);
     } catch (error) {
-      console.error('Erro ao buscar clientes:', error);
+      console.error('Erro ao buscar profissionais:', error);
       throw error;
     }
   };
 
-  // Buscar clientes com aniversário no mês atual
+  // Fetch appointments
+  const buscarAgendamentos = async (userId: string) => {
+    try {
+      console.log('Buscando agendamentos para userId:', userId);
+      const agendamentosData = await appointmentService.obterAgendamentosUsuario(userId);
+      console.log('Dados brutos de agendamentos:', agendamentosData);
+      const listaAgendamentos = agendamentosData
+        .map((agendamento) => {
+          // Validate data and hora
+          if (!agendamento.data || !agendamento.hora) {
+            console.warn('Agendamento inválido, faltando data ou hora:', agendamento);
+            return null;
+          }
+          const startStr = `${agendamento.data}T${agendamento.hora}:00-03:00`; // Brazil timezone
+          const start = new Date(startStr);
+          const end = new Date(start.getTime() + (agendamento.duracao || 30) * 60000);
+          const event = {
+            ...agendamento,
+            start: isNaN(start.getTime()) ? null : start,
+            end: isNaN(end.getTime()) ? null : end,
+            title: `${agendamento.nomeCliente || 'Cliente'} - ${agendamento.nomeServico || 'Serviço'}`,
+            backgroundColor: agendamento.corProfissional || '#3788d8',
+          };
+          console.log('Evento mapeado:', {
+            id: agendamento.id,
+            title: event.title,
+            start: event.start?.toISOString() || 'null',
+            end: event.end?.toISOString() || 'null',
+            rawData: agendamento.data,
+            rawHora: agendamento.hora,
+            duracao: agendamento.duracao,
+            backgroundColor: event.backgroundColor,
+          });
+          return event;
+        })
+        .filter((event) => event && event.start && event.end);
+      setAgendamentos(listaAgendamentos);
+      console.log('Agendamentos encontrados:', listaAgendamentos);
+    } catch (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      setErro('Erro ao carregar agendamentos. Verifique permissões.');
+      toast.error('Erro ao carregar agendamentos');
+    }
+  };
+
+  // Fetch birthday clients
   const buscarClientesAniversario = async (userId: string) => {
     try {
       console.log('Buscando aniversariantes para userId:', userId);
-      const querySnapshot = await getDocs(collection(firestore, 'clients'));
-      const mesAtual = getMonth(new Date()) + 1; // 1-12
-      const listaAniversario = querySnapshot.docs
-        .filter((doc) => {
-          const cliente = doc.data() as Cliente;
-          if (!cliente.aniversario || cliente.proprietarioId !== userId) return false;
-          const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
-          return mesAniversario === mesAtual;
-        })
-        .map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
+      const clientes = await serviceService.getClientes(userId);
+      const mesAtual = getMonth(new Date()) + 1;
+      const listaAniversario = clientes.filter((cliente) => {
+        if (!cliente.aniversario) return false;
+        const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
+        return mesAniversario === mesAtual;
+      });
       setClientesAniversario(listaAniversario);
       console.log('Aniversariantes encontrados:', listaAniversario);
       if (listaAniversario.length > 0) {
@@ -152,65 +206,7 @@ export default function AgendaPage() {
     }
   };
 
-  // Buscar serviços
-  const buscarServicos = async (userId: string) => {
-    try {
-      console.log('Buscando serviços para userId:', userId);
-      const querySnapshot = await getDocs(collection(firestore, 'services'));
-      setServicos(
-        querySnapshot.docs
-          .filter((doc) => doc.data().proprietarioId === userId)
-          .map((doc) => ({ id: doc.id, ...doc.data() } as Servico)),
-      );
-    } catch (error) {
-      console.error('Erro ao buscar serviços:', error);
-      throw error;
-    }
-  };
-
-  // Buscar profissionais
-  const buscarProfissionais = async (userId: string) => {
-    try {
-      console.log('Buscando profissionais para userId:', userId);
-      const querySnapshot = await getDocs(collection(firestore, 'users'));
-      setProfissionais(
-        querySnapshot.docs
-          .filter((doc) => doc.data().proprietarioId === userId || doc.id === userId)
-          .map((doc) => ({ id: doc.id, ...doc.data() } as Profissional)),
-      );
-    } catch (error) {
-      console.error('Erro ao buscar profissionais:', error);
-      throw error;
-    }
-  };
-
-  // Buscar agendamentos
-  const buscarAgendamentos = async (userId: string) => {
-    try {
-      console.log('Buscando agendamentos para userId:', userId);
-      const querySnapshot = await getDocs(collection(firestore, 'appointments'));
-      setAgendamentos(
-        querySnapshot.docs
-          .filter((doc) => doc.data().proprietarioId === userId)
-          .map((doc) => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              ...data,
-              inicio: new Date(`${data.data}T${data.hora}`),
-              fim: new Date(new Date(`${data.data}T${data.hora}`).getTime() + data.duracao * 60000),
-              titulo: `${data.nomeCliente} - ${data.nomeServico}`,
-              corFundo: data.corProfissional,
-            } as Agendamento;
-          }),
-      );
-    } catch (error) {
-      console.error('Erro ao buscar agendamentos:', error);
-      throw error;
-    }
-  };
-
-  // Criar cliente
+  // Create client
   const handleCriarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Tentando cadastrar cliente:', novoCliente);
@@ -222,27 +218,38 @@ export default function AgendaPage() {
     try {
       const validado = clienteSchema.parse(novoCliente);
       console.log('Dados validados do cliente:', validado);
-      const docRef = await addDoc(collection(firestore, 'clients'), {
-        ...validado,
-        proprietarioId: user.id,
-      });
-      console.log('Cliente cadastrado com ID:', docRef.id);
+      await serviceService.createCliente(
+        {
+          nome: validado.nome,
+          telefone: validado.telefone,
+          email: validado.email || '',
+          aniversario: validado.aniversario || '',
+          whatsapp: validado.telefone,
+          recorrencia: 'nenhuma',
+          proprietarioId: user.id, // Ensure proprietarioId is set
+        },
+        user.id,
+      );
+      console.log('Cliente cadastrado com sucesso');
       setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '' });
-      await buscarClientes(user.id);
+      const clientesData = await serviceService.getClientes(user.id);
+      console.log('Clientes atualizados:', clientesData);
+      setClientes(clientesData);
       await buscarClientesAniversario(user.id);
       toast.success('Cliente cadastrado com sucesso!');
       setMostrarCadastroCliente(false);
-      setAbrirDialogoAgendamento(true); // Volta para o agendamento
+      setAbrirDialogoAgendamento(true);
     } catch (error: any) {
       console.error('Erro ao criar cliente:', error);
-      const mensagemErro = error instanceof z.ZodError
-        ? error.errors.map(e => e.message).join(', ')
-        : error.message || 'Erro ao cadastrar cliente';
+      const mensagemErro =
+        error instanceof z.ZodError
+          ? error.errors.map((e) => e.message).join(', ')
+          : error.message || 'Erro ao cadastrar cliente';
       toast.error(mensagemErro);
     }
   };
 
-  // Criar agendamento
+  // Create appointment
   const handleCriarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Tentando criar agendamento:', novoAgendamento);
@@ -252,7 +259,12 @@ export default function AgendaPage() {
       return;
     }
     try {
-      const validado = agendamentoSchema.parse(novoAgendamento);
+      const parsedAgendamento = {
+        ...novoAgendamento,
+        duracao: Number(novoAgendamento.duracao) || 30,
+        custo: Number(novoAgendamento.custo) || 0,
+      };
+      const validado = agendamentoSchema.parse(parsedAgendamento);
       console.log('Dados validados do agendamento:', validado);
       const cliente = clientes.find((c) => c.id === validado.clienteId);
       const servico = servicos.find((s) => s.id === validado.servicoId);
@@ -262,7 +274,7 @@ export default function AgendaPage() {
         toast.error('Cliente, serviço ou profissional não encontrado.');
         return;
       }
-      const agendamento = {
+      const agendamento: Agendamento = {
         clienteId: validado.clienteId,
         nomeCliente: cliente.nome,
         servicoId: validado.servicoId,
@@ -272,16 +284,16 @@ export default function AgendaPage() {
         duracao: validado.duracao,
         profissionalId: validado.profissionalId,
         nomeProfissional: profissional.nome,
-        corProfissional: profissional.cor,
+        corProfissional: profissional.cor || '#3788d8',
         custo: validado.custo,
         recorrencia: validado.recorrencia,
-        status: 'pendente' as const,
+        status: 'pendente',
         proprietarioId: user.id,
       };
-      const docRef = await addDoc(collection(firestore, 'appointments'), agendamento);
-      console.log('Agendamento criado com ID:', docRef.id);
+      console.log('Agendamento a ser salvo:', agendamento);
+      await appointmentService.criarAgendamento(agendamento);
 
-      // Recorrência
+      // Handle recurrence
       if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
         let dataAtual = new Date(validado.data);
         const dataFim = new Date(validado.recorrencia.dataFim);
@@ -293,7 +305,7 @@ export default function AgendaPage() {
                 ? addWeeks(dataAtual, 2)
                 : addMonths(dataAtual, 1);
           if (dataAtual <= dataFim) {
-            await addDoc(collection(firestore, 'appointments'), {
+            await appointmentService.criarAgendamento({
               ...agendamento,
               data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
               hora: validado.hora,
@@ -317,16 +329,18 @@ export default function AgendaPage() {
       setAbrirDialogoAgendamento(false);
     } catch (error: any) {
       console.error('Erro ao criar agendamento:', error);
-      const mensagemErro = error instanceof z.ZodError
-        ? error.errors.map(e => e.message).join(', ')
-        : error.message || 'Erro ao criar agendamento';
-      toast.error(mensagemErro);
+      if (error instanceof z.ZodError) {
+        console.log('Detalhes do ZodError:', error.errors);
+        toast.error(error.errors.map((e) => e.message).join(', '));
+      } else {
+        toast.error(error.message || 'Erro ao criar agendamento');
+      }
     }
   };
 
-  // Lidar com clique no calendário
+  // Handle calendar date click
   const handleDataClique = (info: { date: Date }) => {
-    console.log('Clique na data:', info.date);
+    console.log('Clique na data:', info.date.toISOString());
     if (!user || !user.id) {
       console.error('Nenhum usuário autenticado ou ID ausente', { user });
       toast.error('Erro: Nenhum usuário autenticado');
@@ -341,7 +355,7 @@ export default function AgendaPage() {
     setAbrirDialogoAgendamento(true);
   };
 
-  // Resumo financeiro diário
+  // Daily financial summary
   const resumoFinanceiroDiario = () => {
     const hoje = format(new Date(), 'yyyy-MM-dd', { locale: ptBR });
     const agendamentosDiarios = agendamentos.filter((agendamento) => agendamento.data === hoje);
@@ -375,6 +389,9 @@ export default function AgendaPage() {
     return <div className="min-h-screen flex items-center justify-center">Carregando dados...</div>;
   }
 
+  // Debug state
+  console.log('Estado atual:', { clientes, servicos, profissionais, agendamentos });
+
   return (
     <div className="min-h-screen bg-background p-4">
       <Head>
@@ -383,20 +400,29 @@ export default function AgendaPage() {
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       </Head>
 
-      <main className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Header and Financial Summary */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
           <h1 className="text-2xl font-bold">Agenda</h1>
-          <div className="flex items-center gap-4">
-            <Button className="flex items-center gap-2" onClick={() => setAbrirDialogoAgendamento(true)}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <Button
+              className="flex items-center gap-2"
+              onClick={() => {
+                setMostrarCadastroCliente(true);
+                setAbrirDialogoAgendamento(true);
+              }}
+            >
               <UserPlusIcon className="h-4 w-4" /> Cadastrar Cliente
             </Button>
             <div className="text-sm">
-              <p><strong>Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}</strong></p>
+              <p>
+                <strong>Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}</strong>
+              </p>
               <p>Total do Dia: R${resumoFinanceiroDiario().receitaTotal.toFixed(2)}</p>
               <p>Clientes Atendidos: {resumoFinanceiroDiario().clientesUnicos}</p>
               <p>Por Profissional:</p>
               <ul className="list-disc pl-5">
-                {resumoFinanceiroDiario().receitasProfissionais?.map((prof) => (
+                {resumoFinanceiroDiario().receitasProfissionais.map((prof) => (
                   <li key={prof.nome}>
                     {prof.nome}: R${prof.receita.toFixed(2)}
                   </li>
@@ -406,47 +432,52 @@ export default function AgendaPage() {
           </div>
         </div>
 
-        {/* Notificação de Aniversariantes */}
+        {/* Birthday Notification */}
         {clientesAniversario.length > 0 && (
           <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
             <h2 className="text-lg font-semibold">🎂 Aniversariantes do Mês</h2>
             <ul className="list-disc pl-5 mt-2">
               {clientesAniversario.map((cliente) => (
                 <li key={cliente.id}>
-                  {cliente.nome} - {cliente.aniversario ? format(parse(cliente.aniversario, 'yyyy-MM-dd', new Date()), 'dd/MM', { locale: ptBR }) : 'N/A'}
+                  {cliente.nome} -{' '}
+                  {cliente.aniversario
+                    ? format(parse(cliente.aniversario, 'yyyy-MM-dd', new Date()), 'dd/MM', { locale: ptBR })
+                    : 'N/A'}
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        {/* Dialogo de Agendamento */}
+        {/* Appointment Dialog */}
         <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[425px] max-w-[90vw]">
             <DialogHeader>
               <DialogTitle>{mostrarCadastroCliente ? 'Cadastrar Cliente' : 'Novo Agendamento'}</DialogTitle>
               <DialogDescription>
-                {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Crie um novo agendamento selecionando cliente, serviço e horário.'}
+                {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Crie um novo agendamento.'}
               </DialogDescription>
             </DialogHeader>
             {mostrarCadastroCliente ? (
-              <form onSubmit={handleCriarCliente} className="grid gap-4 py-4">
+              <form onSubmit={handleCriarCliente} className="grid gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="nome">Nome</Label>
                   <Input
                     id="nome"
                     value={novoCliente.nome}
                     onChange={(e) => setNovoCliente({ ...novoCliente, nome: e.target.value })}
+                    placeholder="Nome completo"
                     required
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="telefone">Telefone</Label>
+                  <Label htmlFor="telefone">Telefone/WhatsApp</Label>
                   <Input
                     id="telefone"
                     type="tel"
                     value={novoCliente.telefone}
                     onChange={(e) => setNovoCliente({ ...novoCliente, telefone: e.target.value })}
+                    placeholder="Ex.: +5511999999999"
                     required
                   />
                 </div>
@@ -457,6 +488,7 @@ export default function AgendaPage() {
                     type="email"
                     value={novoCliente.email}
                     onChange={(e) => setNovoCliente({ ...novoCliente, email: e.target.value })}
+                    placeholder="exemplo@dominio.com"
                   />
                 </div>
                 <div className="grid gap-2">
@@ -476,17 +508,17 @@ export default function AgendaPage() {
                 </div>
               </form>
             ) : (
-              <form onSubmit={handleCriarAgendamento} className="grid gap-4 py-4">
+              <form onSubmit={handleCriarAgendamento} className="grid gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="clienteId">Cliente</Label>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
                     <Select
                       value={novoAgendamento.clienteId}
                       onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, clienteId: value })}
                       required
                     >
                       <SelectTrigger id="clienteId">
-                        <SelectValue placeholder="Selecione o Cliente" />
+                        <SelectValue placeholder="Selecione o cliente" />
                       </SelectTrigger>
                       <SelectContent>
                         {clientes.map((cliente) => (
@@ -496,8 +528,12 @@ export default function AgendaPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button variant="outline" onClick={() => setMostrarCadastroCliente(true)}>
-                      Novo Cliente
+                    <Button
+                      variant="outline"
+                      onClick={() => setMostrarCadastroCliente(true)}
+                      title="Cadastrar novo cliente"
+                    >
+                      <UserPlusIcon className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
@@ -517,12 +553,12 @@ export default function AgendaPage() {
                     required
                   >
                     <SelectTrigger id="servicoId">
-                      <SelectValue placeholder="Selecione o Serviço" />
+                      <SelectValue placeholder="Selecione o serviço" />
                     </SelectTrigger>
                     <SelectContent>
                       {servicos.map((servico) => (
                         <SelectItem key={servico.id} value={servico.id}>
-                          {servico.nome} - R${servico.preco}
+                          {servico.nome} - R${servico.preco.toFixed(2)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -530,22 +566,22 @@ export default function AgendaPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="data">Data</Label>
-                  <DatePicker
-                    date={novoAgendamento.data ? new Date(novoAgendamento.data) : undefined}
-                    setDate={(date) =>
-                      setNovoAgendamento({
-                        ...novoAgendamento,
-                        data: date ? format(date, 'yyyy-MM-dd', { locale: ptBR }) : '',
-                      })
-                    }
+                  <Input
+                    id="data"
+                    type="date"
+                    value={novoAgendamento.data}
+                    onChange={(e) => setNovoAgendamento({ ...novoAgendamento, data: e.target.value })}
+                    required
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="hora">Hora</Label>
-                  <TimeSelector
-                    selectedDate={novoAgendamento.data ? new Date(novoAgendamento.data) : undefined}
-                    selectedTime={novoAgendamento.hora}
-                    onSelectTime={(hora) => setNovoAgendamento({ ...novoAgendamento, hora: hora || '' })}
+                  <Input
+                    id="hora"
+                    type="time"
+                    value={novoAgendamento.hora}
+                    onChange={(e) => setNovoAgendamento({ ...novoAgendamento, hora: e.target.value })}
+                    required
                   />
                 </div>
                 <div className="grid gap-2">
@@ -553,9 +589,12 @@ export default function AgendaPage() {
                   <Input
                     id="duracao"
                     type="number"
-                    value={novoAgendamento.duracao}
+                    value={novoAgendamento.duracao || ''}
                     onChange={(e) =>
-                      setNovoAgendamento({ ...novoAgendamento, duracao: parseInt(e.target.value) })
+                      setNovoAgendamento({
+                        ...novoAgendamento,
+                        duracao: e.target.value ? parseInt(e.target.value) : 30,
+                      })
                     }
                     step="5"
                     min="5"
@@ -570,7 +609,7 @@ export default function AgendaPage() {
                     required
                   >
                     <SelectTrigger id="profissionalId">
-                      <SelectValue placeholder="Selecione o Profissional" />
+                      <SelectValue placeholder="Selecione o profissional" />
                     </SelectTrigger>
                     <SelectContent>
                       {profissionais.map((prof) => (
@@ -586,10 +625,15 @@ export default function AgendaPage() {
                   <Input
                     id="custo"
                     type="number"
-                    value={novoAgendamento.custo}
+                    value={novoAgendamento.custo || ''}
                     onChange={(e) =>
-                      setNovoAgendamento({ ...novoAgendamento, custo: parseFloat(e.target.value) })
+                      setNovoAgendamento({
+                        ...novoAgendamento,
+                        custo: e.target.value ? parseFloat(e.target.value) : 0,
+                      })
                     }
+                    step="0.01"
+                    min="0"
                     required
                   />
                 </div>
@@ -600,12 +644,15 @@ export default function AgendaPage() {
                     onValueChange={(value) =>
                       setNovoAgendamento({
                         ...novoAgendamento,
-                        recorrencia: { ...novoAgendamento.recorrencia, frequencia: value as 'nenhuma' | 'semanal' | 'quinzenal' | 'mensal' },
+                        recorrencia: {
+                          ...novoAgendamento.recorrencia,
+                          frequencia: value as 'nenhuma' | 'semanal' | 'quinzenal' | 'mensal',
+                        },
                       })
                     }
                   >
                     <SelectTrigger id="recorrencia">
-                      <SelectValue placeholder="Sem Recorrência" />
+                      <SelectValue placeholder="Sem recorrência" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="nenhuma">Sem Recorrência</SelectItem>
@@ -618,14 +665,16 @@ export default function AgendaPage() {
                 {novoAgendamento.recorrencia.frequencia !== 'nenhuma' && (
                   <div className="grid gap-2">
                     <Label htmlFor="dataFim">Data Final da Recorrência</Label>
-                    <DatePicker
-                      date={novoAgendamento.recorrencia.dataFim ? new Date(novoAgendamento.recorrencia.dataFim) : undefined}
-                      setDate={(date) =>
+                    <Input
+                      id="dataFim"
+                      type="date"
+                      value={novoAgendamento.recorrencia.dataFim}
+                      onChange={(e) =>
                         setNovoAgendamento({
                           ...novoAgendamento,
                           recorrencia: {
                             ...novoAgendamento.recorrencia,
-                            dataFim: date ? format(date, 'yyyy-MM-dd', { locale: ptBR }) : '',
+                            dataFim: e.target.value,
                           },
                         })
                       }
@@ -638,28 +687,54 @@ export default function AgendaPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Visão Semanal */}
+        {/* Calendar Section */}
         <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          locale={ptLocale}
-          events={agendamentos}
-          eventContent={(eventInfo) => (
-            <div className="p-1 text-sm" style={{ backgroundColor: eventInfo.event.corFundo, color: 'white' }}>
-              <b>{eventInfo.event.titulo}</b>
-            </div>
-          )}
-          slotMinTime="08:00:00"
-          slotMaxTime="22:00:00"
-          height="auto"
-          headerToolbar={{
-            left: 'prev,next hoje',
-            center: 'title',
-            right: 'timeGridWeek,timeGridDay',
-          }}
-          dateClick={handleDataClique}
-        />
+        <div className="overflow-x-auto">
+          <FullCalendar
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="timeGridWeek"
+            initialDate="2025-06-01"
+            locale={ptLocale}
+            events={agendamentos}
+            eventContent={(info) => {
+              console.log('Renderizando evento:', {
+                id: info.event.id,
+                title: info.event.title,
+                start: info.event.start?.toISOString() || 'null',
+                end: info.event.end?.toISOString() || 'null',
+              });
+              return (
+                <div
+                  className="p-2 text-sm"
+                  style={{ backgroundColor: info.event.backgroundColor || '#3788d8', color: 'white' }}
+                >
+                  <b>{info.event.title}</b>
+                </div>
+              );
+            }}
+            slotMinTime="08:00:00"
+            slotMaxTime="22:00:00"
+            height="auto"
+            headerToolbar={{
+              left: 'prev,next today',
+              center: 'title',
+              right: 'timeGridWeek,timeGridDay',
+            }}
+            dateClick={handleDataClique}
+            eventDisplay="block"
+            slotLabelFormat={{
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }}
+            validRange={{
+              start: '2025-01-01',
+              end: '2026-12-31',
+            }}
+            allDaySlot={false}
+            timeZone="America/Sao_Paulo"
+          />
+        </div>
       </main>
     </div>
   );

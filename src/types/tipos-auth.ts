@@ -1,18 +1,3 @@
-export interface Usuario {
-  id: string;
-  email: string | null;
-  nomeExibicao: string | null;
-}
-
-export interface Cliente {
-  id: string;
-  nome: string;
-  telefone: string;
-  email?: string;
-  aniversario?: string; // Formato: yyyy-MM-dd
-  proprietarioId: string;
-}
-
 export interface Servico {
   id: string;
   nome: string;
@@ -24,28 +9,25 @@ export interface Servico {
 export interface Profissional {
   id: string;
   nome: string;
+  email: string;
   cor: string;
-  proprietarioId?: string;
+  proprietarioId: string;
 }
 
-export interface Agendamento {
+export interface Produto {
   id: string;
-  clienteId: string;
-  nomeCliente: string;
-  servicoId: string;
-  nomeServico: string;
-  data: string;
-  hora: string;
-  duracao: number;
-  profissionalId: string;
-  nomeProfissional: string;
-  corProfissional: string;
+  nome: string;
   custo: number;
-  recorrencia: { frequencia: 'nenhuma' | 'semanal' | 'quinzenal' | 'mensal'; dataFim?: string };
-  status: 'confirmado' | 'pendente';
+  quantidade: number;
   proprietarioId: string;
-  inicio?: Date;
-  fim?: Date;
-  titulo?: string;
-  corFundo?: string;
+}
+
+export interface Cliente {
+  id: string;
+  nome: string;
+  whatsapp: string;
+  email: string;
+  aniversario: string; // Formato: YYYY-MM-DD
+  recorrencia: 'semanal' | 'quinzenal' | 'mensal' | 'nenhuma';
+  proprietarioId: string;
 }

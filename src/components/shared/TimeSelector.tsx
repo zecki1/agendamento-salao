@@ -1,89 +1,72 @@
+'use client';
 
-import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { appointmentService } from "@/services/appointment-service";
-import { getAvailableHours } from "@/lib/utils";
-import { Clock, Check } from "lucide-react";
+import { useState, useEffect } from 'react';
+import { appointmentService } from '@/services/appointment-service';
+import { format, addMinutes, isSameDay } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface TimeSelectorProps {
-  selectedDate: Date | undefined;
+  selectedDate?: Date;
+  selectedTime?: string;
   onSelectTime: (time: string | null) => void;
-  selectedTime: string | null;
 }
 
-export function TimeSelector({ selectedDate, onSelectTime, selectedTime }: TimeSelectorProps) {
-  const [availableHours, setAvailableHours] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+export const TimeSelector = ({ selectedDate, selectedTime, onSelectTime }: TimeSelectorProps) => {
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const checkAvailability = async () => {
+    const fetchAvailableTimes = async () => {
       if (!selectedDate) {
-        setAvailableHours([]);
+        setAvailableTimes([]);
         return;
       }
 
-      setIsLoading(true);
+      setLoading(true);
       try {
-        // Obter todos os horários possíveis (de 2 em 2 horas)
-        const allHours = getAvailableHours();
-        
-        // Verificar disponibilidade para cada horário
-        const availableTimeSlots = [];
-        
-        for (const time of allHours) {
-          const isAvailable = await appointmentService.checkAvailability(selectedDate, time);
-          if (isAvailable) {
-            availableTimeSlots.push(time);
+        console.log('Buscando horários disponíveis para:', selectedDate);
+        const times: string[] = [];
+        const startHour = 8;
+        const endHour = 22;
+        const interval = 30; // minutos
+
+        for (let hour = startHour; hour < endHour; hour++) {
+          for (let minute = 0; minute < 60; minute += interval) {
+            const time = format(new Date().setHours(hour, minute, 0, 0), 'HH:mm', { locale: ptBR });
+            const isAvailable = await appointmentService.verificarDisponibilidade(selectedDate, time);
+            if (isAvailable) {
+              times.push(time);
+            }
           }
         }
-        
-        setAvailableHours(availableTimeSlots);
+        setAvailableTimes(times);
       } catch (error) {
-        console.error("Erro ao verificar disponibilidade:", error);
+        console.error('Erro ao buscar horários disponíveis:', error);
       } finally {
-        setIsLoading(false);
+        setLoading(false);
       }
     };
 
-    checkAvailability();
+    fetchAvailableTimes();
   }, [selectedDate]);
 
-  const handleTimeSelect = (time: string) => {
-    onSelectTime(time === selectedTime ? null : time);
+  const handleTimeChange = (value: string) => {
+    onSelectTime(value);
   };
 
-  if (!selectedDate) {
-    return null;
-  }
-
   return (
-    <div className="space-y-3">
-      <label className="text-sm font-medium">Horário</label>
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Verificando horários disponíveis...</p>
-      ) : availableHours.length > 0 ? (
-        <div className="grid grid-cols-2 gap-2">
-          {availableHours.map((time) => (
-            <Button
-              key={time}
-              type="button"
-              variant={selectedTime === time ? "default" : "outline"}
-              className="justify-start"
-              onClick={() => handleTimeSelect(time)}
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              {time}
-              {selectedTime === time && (
-                <Check className="h-4 w-4 ml-auto" />
-              )}
-            </Button>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Não há horários disponíveis para esta data.
-        </p>
-      )}
-    </div>
+    <Select value={selectedTime} onValueChange={handleTimeChange} disabled={loading || !selectedDate}>
+      <SelectTrigger>
+        <SelectValue placeholder={loading ? 'Carregando...' : 'Selecione um horário'} />
+      </SelectTrigger>
+      <SelectContent>
+        {availableTimes.map((time) => (
+          <SelectItem key={time} value={time}>
+            {time}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
-}
+};
