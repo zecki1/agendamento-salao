@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { UserPlusIcon } from 'lucide-react';
+import { UserPlusIcon, Trash2 } from 'lucide-react';
 import { serviceService } from '@/services/service';
 import { appointmentService } from '@/services/appointment-service';
 import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
@@ -33,6 +33,7 @@ const clienteSchema = z.object({
     (val) => !val || /^\d{4}-\d{2}-\d{2}$/.test(val),
     { message: 'Data de aniversário inválida (use YYYY-MM-DD)' },
   ),
+  cor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use formato #RRGGBB)').optional(),
 });
 
 const agendamentoSchema = z.object({
@@ -55,7 +56,7 @@ export default function AgendaPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [profissionais, setProfissionais] = useState<Profissional[]>([]);
-  const [novoCliente, setNovoCliente] = useState({ nome: '', telefone: '', email: '', aniversario: '' });
+  const [novoCliente, setNovoCliente] = useState({ nome: '', telefone: '', email: '', aniversario: '', cor: '#3788d8' });
   const [novoAgendamento, setNovoAgendamento] = useState({
     clienteId: '',
     servicoId: '',
@@ -66,6 +67,7 @@ export default function AgendaPage() {
     custo: 0,
     recorrencia: { frequencia: 'nenhuma' as const, dataFim: '' },
   });
+  const [editandoAgendamento, setEditandoAgendamento] = useState<Agendamento | null>(null);
   const [mostrarCadastroCliente, setMostrarCadastroCliente] = useState(false);
   const [abrirDialogoAgendamento, setAbrirDialogoAgendamento] = useState(false);
   const [dataClicada, setDataClicada] = useState<Date | null>(null);
@@ -103,7 +105,7 @@ export default function AgendaPage() {
           }),
           buscarProfissionais(user.id).catch((error) => {
             console.warn('Erro ao buscar profissionais, continuando com lista vazia:', error);
-            setProfissionais([]); // Continue even if professionals fail
+            setProfissionais([]);
           }),
           buscarAgendamentos(user.id),
           buscarClientesAniversario(user.id),
@@ -131,8 +133,8 @@ export default function AgendaPage() {
       if (userDoc.exists()) {
         listaProfissionais.push({ id: userId, ...userDoc.data() } as Profissional);
       }
-      setProfissionais(listaProfissional);
-      console.log('Profissionais encontrados:', listaProfissional);
+      setProfissionais(listaProfissionais);
+      console.log('Profissionais encontrados:', listaProfissionais);
     } catch (error) {
       console.error('Erro ao buscar profissionais:', error);
       throw error;
@@ -147,20 +149,20 @@ export default function AgendaPage() {
       console.log('Dados brutos de agendamentos:', agendamentosData);
       const listaAgendamentos = agendamentosData
         .map((agendamento) => {
-          // Validate data and hora
           if (!agendamento.data || !agendamento.hora) {
             console.warn('Agendamento inválido, faltando data ou hora:', agendamento);
             return null;
           }
-          const startStr = `${agendamento.data}T${agendamento.hora}:00-03:00`; // Brazil timezone
+          const startStr = `${agendamento.data}T${agendamento.hora}:00-03:00`;
           const start = new Date(startStr);
           const end = new Date(start.getTime() + (agendamento.duracao || 30) * 60000);
+          const cliente = clientes.find((c) => c.id === agendamento.clienteId);
           const event = {
             ...agendamento,
             start: isNaN(start.getTime()) ? null : start,
             end: isNaN(end.getTime()) ? null : end,
             title: `${agendamento.nomeCliente || 'Cliente'} - ${agendamento.nomeServico || 'Serviço'}`,
-            backgroundColor: agendamento.corProfissional || '#3788d8',
+            backgroundColor: agendamento.corCliente || cliente?.cor || '#3788d8',
           };
           console.log('Evento mapeado:', {
             id: agendamento.id,
@@ -174,7 +176,7 @@ export default function AgendaPage() {
           });
           return event;
         })
-        .filter((event) => event && event.start && event.end);
+        .filter((event): event is Agendamento => event !== null && event.start !== null && event.end !== null);
       setAgendamentos(listaAgendamentos);
       console.log('Agendamentos encontrados:', listaAgendamentos);
     } catch (error) {
@@ -209,10 +211,9 @@ export default function AgendaPage() {
   // Create client
   const handleCriarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Tentando cadastrar cliente:', novoCliente);
     if (!user || !user.id) {
-      console.error('Nenhum usuário autenticado ou ID ausente', { user });
-      toast.error('Erro: Nenhum usuário autenticado');
+      console.error('Erro ao buscar usuário:', { user });
+      toast.error('Erro ao buscar usuário');
       return;
     }
     try {
@@ -222,16 +223,17 @@ export default function AgendaPage() {
         {
           nome: validado.nome,
           telefone: validado.telefone,
+          whatsapp: validado.telefone,
           email: validado.email || '',
           aniversario: validado.aniversario || '',
-          whatsapp: validado.telefone,
+          cor: validado.cor || '#3788d8',
           recorrencia: 'nenhuma',
-          proprietarioId: user.id, // Ensure proprietarioId is set
+          proprietarioId: user.id,
         },
         user.id,
       );
       console.log('Cliente cadastrado com sucesso');
-      setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '' });
+      setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '', cor: '#3788d8' });
       const clientesData = await serviceService.getClientes(user.id);
       console.log('Clientes atualizados:', clientesData);
       setClientes(clientesData);
@@ -249,13 +251,13 @@ export default function AgendaPage() {
     }
   };
 
-  // Create appointment
-  const handleCriarAgendamento = async (e: React.FormEvent) => {
+  // Create or update appointment
+  const handleSalvarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Tentando criar agendamento:', novoAgendamento);
+    console.log('Tentando salvar agendamento:', novoAgendamento);
     if (!user || !user.id) {
-      console.error('Nenhum usuário autenticado ou ID ausente', { user });
-      toast.error('Erro: Nenhum usuário autenticado');
+      console.error('Erro ao buscar usuário:', { user });
+      toast.error('Erro ao buscar usuário');
       return;
     }
     try {
@@ -284,36 +286,42 @@ export default function AgendaPage() {
         duracao: validado.duracao,
         profissionalId: validado.profissionalId,
         nomeProfissional: profissional.nome,
-        corProfissional: profissional.cor || '#3788d8',
+        corCliente: cliente.cor || '#3788d8',
         custo: validado.custo,
         recorrencia: validado.recorrencia,
         status: 'pendente',
         proprietarioId: user.id,
       };
-      console.log('Agendamento a ser salvo:', agendamento);
-      await appointmentService.criarAgendamento(agendamento);
-
-      // Handle recurrence
-      if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
-        let dataAtual = new Date(validado.data);
-        const dataFim = new Date(validado.recorrencia.dataFim);
-        while (dataAtual < dataFim) {
-          dataAtual =
-            validado.recorrencia.frequencia === 'semanal'
-              ? addDays(dataAtual, 7)
-              : validado.recorrencia.frequencia === 'quinzenal'
-                ? addWeeks(dataAtual, 2)
-                : addMonths(dataAtual, 1);
-          if (dataAtual <= dataFim) {
-            await appointmentService.criarAgendamento({
-              ...agendamento,
-              data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
-              hora: validado.hora,
-            });
+      if (editandoAgendamento) {
+        agendamento.id = editandoAgendamento.id;
+        console.log('Atualizando agendamento:', agendamento);
+        await appointmentService.atualizarAgendamento(agendamento);
+        toast.success('Agendamento atualizado com sucesso!');
+      } else {
+        console.log('Criando agendamento:', agendamento);
+        await appointmentService.criarAgendamento(agendamento);
+        // Handle recurrence
+        if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
+          let dataAtual = new Date(validado.data);
+          const dataFim = new Date(validado.recorrencia.dataFim);
+          while (dataAtual < dataFim) {
+            dataAtual =
+              validado.recorrencia.frequencia === 'semanal'
+                ? addDays(dataAtual, 7)
+                : validado.recorrencia.frequencia === 'quinzenal'
+                  ? addWeeks(dataAtual, 2)
+                  : addMonths(dataAtual, 1);
+            if (dataAtual <= dataFim) {
+              await appointmentService.criarAgendamento({
+                ...agendamento,
+                data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
+                hora: validado.hora,
+              });
+            }
           }
         }
+        toast.success('Agendamento criado com sucesso!');
       }
-
       setNovoAgendamento({
         clienteId: '',
         servicoId: '',
@@ -324,17 +332,37 @@ export default function AgendaPage() {
         custo: 0,
         recorrencia: { frequencia: 'nenhuma', dataFim: '' },
       });
+      setEditandoAgendamento(null);
       await buscarAgendamentos(user.id);
-      toast.success('Agendamento criado com sucesso!');
       setAbrirDialogoAgendamento(false);
     } catch (error: any) {
-      console.error('Erro ao criar agendamento:', error);
+      console.error('Erro ao salvar agendamento:', error);
       if (error instanceof z.ZodError) {
         console.log('Detalhes do ZodError:', error.errors);
         toast.error(error.errors.map((e) => e.message).join(', '));
       } else {
-        toast.error(error.message || 'Erro ao criar agendamento');
+        toast.error(error.message || 'Erro ao salvar agendamento');
       }
+    }
+  };
+
+  // Delete appointment
+  const handleExcluirAgendamento = async () => {
+    if (!editandoAgendamento || !user || !user.id) {
+      console.error('Erro ao buscar agendamento ou usuário:', { editandoAgendamento, user });
+      toast.error('Erro ao buscar agendamento ou usuário');
+      return;
+    }
+    try {
+      console.log('Excluindo agendamento:', editandoAgendamento.id);
+      await appointmentService.excluirAgendamento(editandoAgendamento.id!);
+      toast.success('Agendamento excluído com sucesso!');
+      await buscarAgendamentos(user.id);
+      setAbrirDialogoAgendamento(false);
+      setEditandoAgendamento(null);
+    } catch (error) {
+      console.error('Erro ao excluir agendamento:', error);
+      toast.error('Erro ao excluir agendamento');
     }
   };
 
@@ -342,8 +370,8 @@ export default function AgendaPage() {
   const handleDataClique = (info: { date: Date }) => {
     console.log('Clique na data:', info.date.toISOString());
     if (!user || !user.id) {
-      console.error('Nenhum usuário autenticado ou ID ausente', { user });
-      toast.error('Erro: Nenhum usuário autenticado');
+      console.error('Erro ao buscar usuário:', { user });
+      toast.error('Erro ao buscar usuário');
       return;
     }
     setDataClicada(info.date);
@@ -352,6 +380,35 @@ export default function AgendaPage() {
       data: format(info.date, 'yyyy-MM-dd', { locale: ptBR }),
       hora: format(info.date, 'HH:mm', { locale: ptBR }),
     });
+    setEditandoAgendamento(null);
+    setMostrarCadastroCliente(false);
+    setAbrirDialogoAgendamento(true);
+  };
+
+  // Handle event click
+  const handleEventClique = (info: { event: { extendedProps: Agendamento } }) => {
+    console.log('Clique no evento:', info.event.extendedProps);
+    if (!user || !user.id) {
+      console.error('Erro ao buscar usuário:', { user });
+      toast.error('Erro ao buscar usuário');
+      return;
+    }
+    const agendamento = info.event.extendedProps;
+    setNovoAgendamento({
+      clienteId: agendamento.clienteId,
+      servicoId: agendamento.servicoId,
+      data: agendamento.data,
+      hora: agendamento.hora,
+      duracao: agendamento.duracao,
+      profissionalId: agendamento.profissionalId,
+      custo: agendamento.custo,
+      recorrencia: {
+        frequencia: agendamento.recorrencia.frequencia,
+        dataFim: agendamento.recorrencia.dataFim || '',
+      },
+    });
+    setEditandoAgendamento(agendamento);
+    setMostrarCadastroCliente(false);
     setAbrirDialogoAgendamento(true);
   };
 
@@ -389,32 +446,32 @@ export default function AgendaPage() {
     return <div className="min-h-screen flex items-center justify-center">Carregando dados...</div>;
   }
 
-  // Debug state
   console.log('Estado atual:', { clientes, servicos, profissionais, agendamentos });
 
   return (
-    <div className="min-h-screen bg-background p-4">
+    <div className="min-h-screen bg-background p-4 flex flex-col">
       <Head>
         <title>Agenda do Salão</title>
         <meta name="description" content="Sistema de agendamento para salão de beleza" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       </Head>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
         {/* Header and Financial Summary */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
           <h1 className="text-2xl font-bold">Agenda</h1>
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
             <Button
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 w-full sm:w-auto"
               onClick={() => {
                 setMostrarCadastroCliente(true);
+                setEditandoAgendamento(null);
                 setAbrirDialogoAgendamento(true);
               }}
             >
               <UserPlusIcon className="h-4 w-4" /> Cadastrar Cliente
             </Button>
-            <div className="text-sm">
+            <div className="text-sm w-full sm:w-auto">
               <p>
                 <strong>Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}</strong>
               </p>
@@ -451,11 +508,13 @@ export default function AgendaPage() {
 
         {/* Appointment Dialog */}
         <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
-          <DialogContent className="sm:max-w-[425px] max-w-[90vw]">
+          <DialogContent className="sm:max-w-[425px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{mostrarCadastroCliente ? 'Cadastrar Cliente' : 'Novo Agendamento'}</DialogTitle>
+              <DialogTitle>
+                {mostrarCadastroCliente ? 'Cadastrar Cliente' : editandoAgendamento ? 'Editar Agendamento' : 'Novo Agendamento'}
+              </DialogTitle>
               <DialogDescription>
-                {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Crie um novo agendamento.'}
+                {mostrarCadastroCliente ? 'Preencha os dados do novo cliente.' : 'Gerencie o agendamento.'}
               </DialogDescription>
             </DialogHeader>
             {mostrarCadastroCliente ? (
@@ -500,6 +559,16 @@ export default function AgendaPage() {
                     onChange={(e) => setNovoCliente({ ...novoCliente, aniversario: e.target.value })}
                   />
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="cor">Cor do Cliente</Label>
+                  <Input
+                    id="cor"
+                    type="color"
+                    value={novoCliente.cor}
+                    onChange={(e) => setNovoCliente({ ...novoCliente, cor: e.target.value })}
+                    className="h-10 w-20"
+                  />
+                </div>
                 <div className="flex gap-2">
                   <Button type="submit">Cadastrar</Button>
                   <Button variant="outline" onClick={() => setMostrarCadastroCliente(false)}>
@@ -508,7 +577,7 @@ export default function AgendaPage() {
                 </div>
               </form>
             ) : (
-              <form onSubmit={handleCriarAgendamento} className="grid gap-4">
+              <form onSubmit={handleSalvarAgendamento} className="grid gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="clienteId">Cliente</Label>
                   <div className="flex items-center gap-2">
@@ -589,7 +658,7 @@ export default function AgendaPage() {
                   <Input
                     id="duracao"
                     type="number"
-                    value={novoAgendamento.duracao || ''}
+                    value={novoAgendamento.duracao}
                     onChange={(e) =>
                       setNovoAgendamento({
                         ...novoAgendamento,
@@ -625,7 +694,7 @@ export default function AgendaPage() {
                   <Input
                     id="custo"
                     type="number"
-                    value={novoAgendamento.custo || ''}
+                    value={novoAgendamento.custo}
                     onChange={(e) =>
                       setNovoAgendamento({
                         ...novoAgendamento,
@@ -652,10 +721,10 @@ export default function AgendaPage() {
                     }
                   >
                     <SelectTrigger id="recorrencia">
-                      <SelectValue placeholder="Sem recorrência" />
+                      <SelectValue placeholder="Sem repetição" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="nenhuma">Sem Recorrência</SelectItem>
+                      <SelectItem value="nenhuma">Sem repetição</SelectItem>
                       <SelectItem value="semanal">Semanal</SelectItem>
                       <SelectItem value="quinzenal">Quinzenal</SelectItem>
                       <SelectItem value="mensal">Mensal</SelectItem>
@@ -664,7 +733,7 @@ export default function AgendaPage() {
                 </div>
                 {novoAgendamento.recorrencia.frequencia !== 'nenhuma' && (
                   <div className="grid gap-2">
-                    <Label htmlFor="dataFim">Data Final da Recorrência</Label>
+                    <Label htmlFor="dataFim">Data Final da Repetição</Label>
                     <Input
                       id="dataFim"
                       type="date"
@@ -681,21 +750,35 @@ export default function AgendaPage() {
                     />
                   </div>
                 )}
-                <Button type="submit">Agendar</Button>
+                <div className="flex gap-2">
+                  <Button type="submit">{editandoAgendamento ? 'Atualizar' : 'Agendar'}</Button>
+                  {editandoAgendamento && (
+                    <Button
+                      variant="destructive"
+                      onClick={handleExcluirAgendamento}
+                      className="flex items-center gap-2"
+                    >
+                      <Trash2 className="h-4 w-4" /> Excluir
+                    </Button>
+                  )}
+                </div>
               </form>
             )}
           </DialogContent>
         </Dialog>
 
-        {/* Calendar Section */}
+        {/* Seção do Calendário */}
         <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto w-full">
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView="timeGridWeek"
-            initialDate="2025-06-01"
+            initialDate="2024-06-01"
             locale={ptLocale}
-            events={agendamentos}
+            events={agendamentos.map((event) => ({
+              ...event,
+              extendedProps: event,
+            }))}
             eventContent={(info) => {
               console.log('Renderizando evento:', {
                 id: info.event.id,
@@ -705,15 +788,20 @@ export default function AgendaPage() {
               });
               return (
                 <div
-                  className="p-2 text-sm"
-                  style={{ backgroundColor: info.event.backgroundColor || '#3788d8', color: 'white' }}
+                  className="p-1 text-sm sm:text-xs rounded-md"
+                  style={{
+                    backgroundColor: info.event.backgroundColor || '#3788d8',
+                    color: 'white',
+                    width: '100%',
+                    height: '100%',
+                  }}
                 >
                   <b>{info.event.title}</b>
                 </div>
               );
             }}
             slotMinTime="08:00:00"
-            slotMaxTime="22:00:00"
+            slotMaxTime="17:00:00"
             height="auto"
             headerToolbar={{
               left: 'prev,next today',
@@ -721,6 +809,7 @@ export default function AgendaPage() {
               right: 'timeGridWeek,timeGridDay',
             }}
             dateClick={handleDataClique}
+            eventClick={handleEventClique}
             eventDisplay="block"
             slotLabelFormat={{
               hour: '2-digit',
@@ -728,11 +817,12 @@ export default function AgendaPage() {
               hour12: false,
             }}
             validRange={{
-              start: '2025-01-01',
-              end: '2026-12-31',
+              start: '2024-01-01',
+              end: '2025-12-31',
             }}
             allDaySlot={false}
             timeZone="America/Sao_Paulo"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-md"
           />
         </div>
       </main>

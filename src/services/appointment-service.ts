@@ -1,5 +1,5 @@
 import { firestore } from '@/lib/firebase';
-import { collection, addDoc, getDocs, doc, updateDoc, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { Agendamento } from '@/types/tipos-auth';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -11,7 +11,7 @@ export const appointmentService = {
       console.log('Criando agendamento:', agendamento);
       await addDoc(collection(firestore, 'appointments'), {
         ...agendamento,
-        criadoEm: Timestamp.fromDate(new Date()), // Explicitly set as Firestore Timestamp
+        criadoEm: Timestamp.fromDate(new Date()),
       });
     } catch (error: any) {
       console.error('Erro ao criar agendamento:', error);
@@ -31,7 +31,7 @@ export const appointmentService = {
           ...data,
           criadoEm: data.criadoEm && typeof data.criadoEm.toDate === 'function'
             ? data.criadoEm.toDate()
-            : new Date(), // Fallback to current date if criadoEm is invalid
+            : new Date(),
         } as Agendamento;
       });
     } catch (error: any) {
@@ -52,12 +52,40 @@ export const appointmentService = {
           ...data,
           criadoEm: data.criadoEm && typeof data.criadoEm.toDate === 'function'
             ? data.criadoEm.toDate()
-            : new Date(), // Fallback to current date if criadoEm is invalid
+            : new Date(),
         } as Agendamento;
       });
     } catch (error: any) {
       console.error('Erro ao buscar todos os agendamentos:', error);
       throw new Error('Erro ao buscar todos os agendamentos: ' + error.message);
+    }
+  },
+
+  async atualizarAgendamento(agendamento: Agendamento): Promise<void> {
+    try {
+      console.log('Atualizando agendamento:', agendamento.id);
+      if (!agendamento.id) {
+        throw new Error('ID do agendamento é obrigatório');
+      }
+      const docRef = doc(firestore, 'appointments', agendamento.id);
+      await updateDoc(docRef, {
+        ...agendamento,
+        atualizadoEm: Timestamp.fromDate(new Date()),
+      });
+    } catch (error: any) {
+      console.error('Erro ao atualizar agendamento:', error);
+      throw new Error('Erro ao atualizar agendamento: ' + error.message);
+    }
+  },
+
+  async excluirAgendamento(agendamentoId: string): Promise<void> {
+    try {
+      console.log('Excluindo agendamento:', agendamentoId);
+      const docRef = doc(firestore, 'appointments', agendamentoId);
+      await deleteDoc(docRef);
+    } catch (error: any) {
+      console.error('Erro ao excluir agendamento:', error);
+      throw new Error('Erro ao excluir agendamento: ' + error.message);
     }
   },
 

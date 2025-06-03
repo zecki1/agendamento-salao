@@ -54,11 +54,11 @@ export default function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center p-4 ">
       <div className="w-full flex flex-col lg:flex-row gap-6 m-12">
         {/* Formulário à esquerda */}
-        <Card className="w-full lg:w-1/2 shadow-xl" data-aos="fade-right" data-aos-delay="100">
+        <Card className="w-full shadow-xl mx-auto lg:w-1/2" data-aos="fade-right" data-aos-delay="100">
           <CardHeader>
             <CardTitle className="text-3xl font-bold text-center">Registre-se!</CardTitle>
             <CardDescription className="text-center text-lg">
-              Crie sua conta para participar do palpite! 🎉
+              Crie sua conta para fazer a gestão da sua agenda!
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -134,22 +134,7 @@ export default function RegisterPage() {
             </form>
           </CardContent>
         </Card>
-        {/* Regras à direita */}
-        <Card className="w-full lg:w-1/2 shadow-xl" data-aos="fade-left" data-aos-delay="100">
-          <CardHeader>
-            <CardTitle className="text-2xl font-semibold">Como funciona</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc pl-5 space-y-2 text-gray-600 dark:text-gray-300">
-              <li><strong>Um palpite por usuário</strong>: Cada participante pode registrar apenas um palpite para o dia e horário do nascimento do Arthurzinho.</li>
-              <li><strong>Registro do palpite</strong>: Todos os palpites são salvos e podem ser acompanhados ao fazer login na plataforma.</li>
-              <li><strong>Formato do palpite</strong>: Escolha uma data (entre 1º e 20 de junho de 2025) e um horário específico (hora e minuto, no formato HH:mm).</li>
-              <li><strong>Prêmio</strong>: O participante que acertar o dia e horário exatos, ou chegar mais perto, ganhará um brinde especial (um presente simbólico, feito com carinho!).</li>
-              <li><strong>Visibilidade dos palpites</strong>: Após o login, você poderá visualizar os palpites de outros participantes, identificados pelo nome completo ou apelido registrado.</li>
-              <li><strong>Prazo</strong>: Os palpites devem be ser feitos até o dia 05 de junho de 2025, conforme a previsão de nascimento.</li>
-            </ul>
-          </CardContent>
-        </Card>
+      
       </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen} data-aos="zoom-in" data-aos-delay="100">
