@@ -62,9 +62,9 @@ export default function AgendaPage() {
     servicoId: '',
     data: '',
     hora: '',
-    duracao: 30,
+    duracao: 30, // Always a number
     profissionalId: '',
-    custo: 0,
+    custo: 0, // Always a number
     recorrencia: { frequencia: 'nenhuma' as const, dataFim: '' },
   });
   const [editandoAgendamento, setEditandoAgendamento] = useState<Agendamento | null>(null);
@@ -173,6 +173,8 @@ export default function AgendaPage() {
             rawHora: agendamento.hora,
             duracao: agendamento.duracao,
             backgroundColor: event.backgroundColor,
+            clienteCor: cliente?.cor,
+            agendamentoCor: agendamento.corCliente,
           });
           return event;
         })
@@ -260,6 +262,13 @@ export default function AgendaPage() {
       toast.error('Erro ao buscar usuário');
       return;
     }
+    if (!novoAgendamento.profissionalId && profissionais.length > 0) {
+      setNovoAgendamento((prev) => ({
+        ...prev,
+        profissionalId: profissionais[0].id,
+      }));
+      toast.info('Profissional selecionado automaticamente.');
+    }
     try {
       const parsedAgendamento = {
         ...novoAgendamento,
@@ -294,11 +303,11 @@ export default function AgendaPage() {
       };
       if (editandoAgendamento) {
         agendamento.id = editandoAgendamento.id;
-        console.log('Atualizando agendamento:', agendamento);
+        console.log('Atualizando agendamento:', { ...agendamento, proprietarioId: user.id });
         await appointmentService.atualizarAgendamento(agendamento);
         toast.success('Agendamento atualizado com sucesso!');
       } else {
-        console.log('Criando agendamento:', agendamento);
+        console.log('Criando agendamento:', { ...agendamento, proprietarioId: user.id });
         await appointmentService.criarAgendamento(agendamento);
         // Handle recurrence
         if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
@@ -354,15 +363,15 @@ export default function AgendaPage() {
       return;
     }
     try {
-      console.log('Excluindo agendamento:', editandoAgendamento.id);
+      console.log('Excluindo agendamento:', { id: editandoAgendamento.id, proprietarioId: user.id });
       await appointmentService.excluirAgendamento(editandoAgendamento.id!);
       toast.success('Agendamento excluído com sucesso!');
       await buscarAgendamentos(user.id);
       setAbrirDialogoAgendamento(false);
       setEditandoAgendamento(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao excluir agendamento:', error);
-      toast.error('Erro ao excluir agendamento');
+      toast.error(error.message || 'Erro ao excluir agendamento');
     }
   };
 
@@ -458,11 +467,11 @@ export default function AgendaPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
         {/* Header and Financial Summary */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-          <h1 className="text-2xl font-bold">Agenda</h1>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+        <div className="mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <h1 className="text-2xl font-bold">Agenda</h1>
             <Button
-              className="flex items-center gap-2 w-full sm:w-auto"
+              className="flex items-center gap-2 w-full sm:w-auto border text-black dark:text-white"
               onClick={() => {
                 setMostrarCadastroCliente(true);
                 setEditandoAgendamento(null);
@@ -471,20 +480,31 @@ export default function AgendaPage() {
             >
               <UserPlusIcon className="h-4 w-4" /> Cadastrar Cliente
             </Button>
-            <div className="text-sm w-full sm:w-auto">
-              <p>
-                <strong>Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}</strong>
-              </p>
-              <p>Total do Dia: R${resumoFinanceiroDiario().receitaTotal.toFixed(2)}</p>
-              <p>Clientes Atendidos: {resumoFinanceiroDiario().clientesUnicos}</p>
-              <p>Por Profissional:</p>
-              <ul className="list-disc pl-5">
-                {resumoFinanceiroDiario().receitasProfissionais.map((prof) => (
-                  <li key={prof.nome}>
-                    {prof.nome}: R${prof.receita.toFixed(2)}
-                  </li>
-                ))}
-              </ul>
+          </div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+            <h2 className="text-lg font-semibold mb-2">
+              Resumo Financeiro - {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Total do Dia:</span>
+                <span className="text-green-600">R${resumoFinanceiroDiario().receitaTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Clientes Atendidos:</span>
+                <span>{resumoFinanceiroDiario().clientesUnicos}</span>
+              </div>
+              <div className="col-span-1 sm:col-span-2">
+                <span className="font-medium">Por Profissional:</span>
+                <ul className="mt-1 space-y-1">
+                  {resumoFinanceiroDiario().receitasProfissionais.map((prof) => (
+                    <li key={prof.nome} className="flex justify-between">
+                      <span>{prof.nome}</span>
+                      <span className="text-green-600">R${prof.receita.toFixed(2)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
         </div>
@@ -670,25 +690,25 @@ export default function AgendaPage() {
                     required
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="profissionalId">Profissional</Label>
-                  <Select
-                    value={novoAgendamento.profissionalId}
-                    onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, profissionalId: value })}
-                    required
-                  >
-                    <SelectTrigger id="profissionalId">
-                      <SelectValue placeholder="Selecione o profissional" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {profissionais.map((prof) => (
-                        <SelectItem key={prof.id} value={prof.id}>
-                          {prof.nome}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="profissionalId">Profissional</Label>
+                    <Select
+                      value={novoAgendamento.profissionalId}
+                      onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, profissionalId: value })}
+                      required
+                    >
+                      <SelectTrigger id="profissionalId">
+                        <SelectValue placeholder={profissionais.length === 0 ? 'Nenhum profissional disponível' : 'Selecione o profissional'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {profissionais.map((prof) => (
+                          <SelectItem key={prof.id} value={prof.id}>
+                            {prof.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 <div className="grid gap-2">
                   <Label htmlFor="custo">Custo (R$)</Label>
                   <Input
@@ -751,7 +771,9 @@ export default function AgendaPage() {
                   </div>
                 )}
                 <div className="flex gap-2">
-                    <Button className="border  text-black dark:text-white" type="submit">{editandoAgendamento ? 'Atualizar' : 'Agendar'}</Button>
+                  <Button className="border text-black dark:text-white" type="submit">
+                    {editandoAgendamento ? 'Atualizar' : 'Agendar'}
+                  </Button>
                   {editandoAgendamento && (
                     <Button
                       variant="destructive"
@@ -767,7 +789,7 @@ export default function AgendaPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Seção do Calendário */}
+        {/* Calendar Section */}
         <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
         <div className="overflow-x-auto w-full">
           <FullCalendar
@@ -785,10 +807,11 @@ export default function AgendaPage() {
                 title: info.event.title,
                 start: info.event.start?.toISOString() || 'null',
                 end: info.event.end?.toISOString() || 'null',
+                backgroundColor: info.event.backgroundColor,
               });
               return (
                 <div
-                  className="p-1 text-sm sm:text-xs rounded-md"
+                  className="fc-event-main p-1 text-sm sm:text-xs rounded-md"
                   style={{
                     backgroundColor: info.event.backgroundColor || '#3788d8',
                     color: 'white',

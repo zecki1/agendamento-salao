@@ -3,7 +3,7 @@ export interface Cliente {
   nome: string;
   telefone?: string;
   whatsapp: string;
-  email: string;
+  email?: string;
   aniversario?: string;
   recorrencia: 'semanal' | 'quinzenal' | 'mensal' | 'nenhuma';
   proprietarioId: string;
@@ -28,14 +28,14 @@ export interface Profissional {
 export interface Agendamento {
   id?: string;
   clienteId: string;
-  nomeCliente: string;
+  nomeCliente?: string;
   servicoId: string;
-  nomeServico: string;
+  nomeServico?: string;
   data: string;
   hora: string;
   duracao: number;
   profissionalId: string;
-  nomeProfissional: string;
+  nomeProfissional?: string;
   corCliente?: string; // Client color
   custo: number;
   recorrencia: {
@@ -44,4 +44,5 @@ export interface Agendamento {
   };
   status: string;
   proprietarioId: string;
+  criadoEm?: Date;
 }

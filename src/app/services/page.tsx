@@ -26,10 +26,11 @@ const servicoSchema = z.object({
 // Esquema de validação para clientes
 const clienteSchema = z.object({
   nome: z.string().min(1, 'Nome é obrigatório'),
-  whatsapp: z.string().regex(/^\+?\d{10,15}$/, 'WhatsApp inválido'),
-  email: z.string().email('E-mail inválido'),
-  aniversario: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de aniversário inválida'),
+  whatsapp: z.string().regex(/^\+?\d{10,15}$/, 'WhatsApp inválido').optional().or(z.literal('')),
+  email: z.string().email('E-mail inválido').optional().or(z.literal('')),
+  aniversario: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de aniversário inválida').optional().or(z.literal('')),
   recorrencia: z.enum(['semanal', 'quinzenal', 'mensal', 'nenhuma']),
+  cor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use formato #RRGGBB)').optional().or(z.literal('')),
 });
 
 export default function ServicesManagementPage() {
@@ -43,6 +44,7 @@ export default function ServicesManagementPage() {
     email: '',
     aniversario: '',
     recorrencia: 'nenhuma' as 'semanal' | 'quinzenal' | 'mensal' | 'nenhuma',
+    cor: '#3788d8',
   });
   const [editandoServico, setEditandoServico] = useState<Servico | null>(null);
   const [editandoCliente, setEditandoCliente] = useState<Cliente | null>(null);
@@ -75,14 +77,15 @@ export default function ServicesManagementPage() {
     e.preventDefault();
     try {
       const validado = servicoSchema.parse(novoServico);
+      console.log('Salvando serviço no Firestore:', validado);
       if (editandoServico) {
         await serviceService.updateServico(
-          { ...validado, id: editandoServico.id },
+          { ...validado, id: editandoServico.id, proprietarioId: user.id },
           user.id,
         );
         toast.success('Serviço atualizado com sucesso!');
       } else {
-        await serviceService.createServico(validado, user.id);
+        await serviceService.createServico({ ...validado, proprietarioId: user.id }, user.id);
         toast.success('Serviço cadastrado com sucesso!');
       }
       setNovoServico({ nome: '', preco: 0, duracao: 30 });
@@ -91,6 +94,7 @@ export default function ServicesManagementPage() {
       const servicosData = await serviceService.getServicos(user.id);
       setServicos(servicosData);
     } catch (error) {
+      console.error('Erro ao salvar serviço:', error);
       const mensagemErro =
         error instanceof z.ZodError
           ? error.errors.map((e) => e.message).join(', ')
@@ -103,14 +107,24 @@ export default function ServicesManagementPage() {
     e.preventDefault();
     try {
       const validado = clienteSchema.parse(novoCliente);
+      const clienteData = {
+        nome: validado.nome,
+        whatsapp: validado.whatsapp || '',
+        email: validado.email || '',
+        aniversario: validado.aniversario || '',
+        recorrencia: validado.recorrencia,
+        cor: validado.cor || '#3788d8',
+        proprietarioId: user.id,
+      };
+      console.log('Salvando cliente no Firestore:', clienteData);
       if (editandoCliente) {
         await serviceService.updateCliente(
-          { ...validado, id: editandoCliente.id },
+          { ...clienteData, id: editandoCliente.id },
           user.id,
         );
         toast.success('Cliente atualizado com sucesso!');
       } else {
-        await serviceService.createCliente(validado, user.id);
+        await serviceService.createCliente(clienteData, user.id);
         toast.success('Cliente cadastrado com sucesso!');
       }
       setNovoCliente({
@@ -119,12 +133,14 @@ export default function ServicesManagementPage() {
         email: '',
         aniversario: '',
         recorrencia: 'nenhuma',
+        cor: '#3788d8',
       });
       setEditandoCliente(null);
       setMostrarDialogoCliente(false);
       const clientesData = await serviceService.getClientes(user.id);
       setClientes(clientesData);
     } catch (error) {
+      console.error('Erro ao salvar cliente:', error);
       const mensagemErro =
         error instanceof z.ZodError
           ? error.errors.map((e) => e.message).join(', ')
@@ -142,10 +158,11 @@ export default function ServicesManagementPage() {
   const handleEditarCliente = (cliente: Cliente) => {
     setNovoCliente({
       nome: cliente.nome,
-      whatsapp: cliente.whatsapp,
-      email: cliente.email,
-      aniversario: cliente.aniversario,
+      whatsapp: cliente.whatsapp || '',
+      email: cliente.email || '',
+      aniversario: cliente.aniversario || '',
       recorrencia: cliente.recorrencia,
+      cor: cliente.cor || '#3788d8',
     });
     setEditandoCliente(cliente);
     setMostrarDialogoCliente(true);
@@ -158,6 +175,7 @@ export default function ServicesManagementPage() {
       const servicosData = await serviceService.getServicos(user.id);
       setServicos(servicosData);
     } catch (error) {
+      console.error('Erro ao excluir serviço:', error);
       toast.error('Erro ao excluir serviço');
     }
   };
@@ -169,6 +187,7 @@ export default function ServicesManagementPage() {
       const clientesData = await serviceService.getClientes(user.id);
       setClientes(clientesData);
     } catch (error) {
+      console.error('Erro ao excluir cliente:', error);
       toast.error('Erro ao excluir cliente');
     }
   };
@@ -240,6 +259,7 @@ export default function ServicesManagementPage() {
                   <TableHead>Email</TableHead>
                   <TableHead>Data de Aniversário</TableHead>
                   <TableHead>Recorrência</TableHead>
+                  <TableHead>Cor</TableHead>
                   <TableHead>Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -247,8 +267,8 @@ export default function ServicesManagementPage() {
                 {clientes.map((cliente) => (
                   <TableRow key={cliente.id}>
                     <TableCell>{cliente.nome}</TableCell>
-                    <TableCell>{cliente.whatsapp}</TableCell>
-                    <TableCell>{cliente.email}</TableCell>
+                    <TableCell>{cliente.whatsapp || 'N/A'}</TableCell>
+                    <TableCell>{cliente.email || 'N/A'}</TableCell>
                     <TableCell>
                       {cliente.aniversario
                         ? format(
@@ -259,6 +279,12 @@ export default function ServicesManagementPage() {
                         : 'N/A'}
                     </TableCell>
                     <TableCell>{cliente.recorrencia}</TableCell>
+                    <TableCell>
+                      <div
+                        className="w-6 h-6 rounded-full"
+                        style={{ backgroundColor: cliente.cor || '#3788d8' }}
+                      ></div>
+                    </TableCell>
                     <TableCell className="flex gap-2">
                       <Button
                         variant="ghost"
@@ -284,7 +310,7 @@ export default function ServicesManagementPage() {
 
         {/* Diálogo para Serviços */}
         <Dialog open={mostrarDialogoServico} onOpenChange={setMostrarDialogoServico}>
-          <DialogContent className="sm:max-w-[425px] max-w-[90vw]">
+          <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editandoServico ? 'Editar Serviço' : 'Novo Serviço'}</DialogTitle>
               <DialogDescription>Preencha os dados do serviço.</DialogDescription>
@@ -307,7 +333,7 @@ export default function ServicesManagementPage() {
                 <Input
                   id="preco"
                   type="number"
-                  value={novoServico.preco || ''}
+                  value={novoServico.preco}
                   onChange={(e) =>
                     setNovoServico({
                       ...novoServico,
@@ -316,6 +342,7 @@ export default function ServicesManagementPage() {
                   }
                   placeholder="0.00"
                   step="0.01"
+                  min="0"
                   required
                 />
               </div>
@@ -324,11 +351,11 @@ export default function ServicesManagementPage() {
                 <Input
                   id="duracao"
                   type="number"
-                  value={novoServico.duracao || ''}
+                  value={novoServico.duracao}
                   onChange={(e) =>
                     setNovoServico({
                       ...novoServico,
-                      duracao: e.target.value ? parseInt(e.target.value) : 0,
+                      duracao: e.target.value ? parseInt(e.target.value) : 30,
                     })
                   }
                   placeholder="30"
@@ -344,7 +371,7 @@ export default function ServicesManagementPage() {
 
         {/* Diálogo para Clientes */}
         <Dialog open={mostrarDialogoCliente} onOpenChange={setMostrarDialogoCliente}>
-          <DialogContent className="sm:max-w-[425px] max-w-[90vw]">
+          <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editandoCliente ? 'Editar Cliente' : 'Novo Cliente'}</DialogTitle>
               <DialogDescription>Preencha os dados do cliente.</DialogDescription>
@@ -363,7 +390,7 @@ export default function ServicesManagementPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="whatsapp">WhatsApp</Label>
+                <Label htmlFor="whatsapp">WhatsApp (opcional)</Label>
                 <Input
                   id="whatsapp"
                   value={novoCliente.whatsapp}
@@ -371,11 +398,10 @@ export default function ServicesManagementPage() {
                     setNovoCliente({ ...novoCliente, whatsapp: e.target.value })
                   }
                   placeholder="Ex.: +5511999999999"
-                  required
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">Email (opcional)</Label>
                 <Input
                   id="email"
                   type="email"
@@ -384,11 +410,10 @@ export default function ServicesManagementPage() {
                     setNovoCliente({ ...novoCliente, email: e.target.value })
                   }
                   placeholder="exemplo@dominio.com"
-                  required
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="aniversario">Data de Aniversário</Label>
+                <Label htmlFor="aniversario">Data de Aniversário (opcional)</Label>
                 <Input
                   id="aniversario"
                   type="date"
@@ -396,7 +421,6 @@ export default function ServicesManagementPage() {
                   onChange={(e) =>
                     setNovoCliente({ ...novoCliente, aniversario: e.target.value })
                   }
-                  required
                 />
               </div>
               <div className="grid gap-2">
@@ -420,6 +444,18 @@ export default function ServicesManagementPage() {
                     <SelectItem value="mensal">Mensal</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="cor">Cor do Cliente</Label>
+                <Input
+                  id="cor"
+                  type="color"
+                  value={novoCliente.cor}
+                  onChange={(e) =>
+                    setNovoCliente({ ...novoCliente, cor: e.target.value })
+                  }
+                  className="h-10 w-20"
+                />
               </div>
               <Button type="submit">{editandoCliente ? 'Atualizar' : 'Cadastrar'}</Button>
             </form>
