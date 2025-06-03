@@ -1,5 +1,5 @@
 import { firestore } from '@/lib/firebase';
-import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, getDoc } from 'firebase/firestore';
 import { Agendamento } from '@/types/tipos-auth';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -68,6 +68,10 @@ export const appointmentService = {
         throw new Error('ID do agendamento é obrigatório');
       }
       const docRef = doc(firestore, 'appointments', agendamento.id);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
       await updateDoc(docRef, {
         ...agendamento,
         atualizadoEm: Timestamp.fromDate(new Date()),
@@ -82,6 +86,10 @@ export const appointmentService = {
     try {
       console.log('Excluindo agendamento:', agendamentoId);
       const docRef = doc(firestore, 'appointments', agendamentoId);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
       await deleteDoc(docRef);
     } catch (error: any) {
       console.error('Erro ao excluir agendamento:', error);
@@ -93,6 +101,10 @@ export const appointmentService = {
     try {
       console.log('Cancelando agendamento:', agendamentoId);
       const docRef = doc(firestore, 'appointments', agendamentoId);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
       await updateDoc(docRef, { status: 'cancelado' });
     } catch (error: any) {
       console.error('Erro ao cancelar agendamento:', error);

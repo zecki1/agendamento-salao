@@ -105,6 +105,7 @@ export default function ServicesManagementPage() {
 
   const handleCriarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Dados antes da validação:', novoCliente);
     try {
       const validado = clienteSchema.parse(novoCliente);
       const clienteData = {
@@ -156,12 +157,13 @@ export default function ServicesManagementPage() {
   };
 
   const handleEditarCliente = (cliente: Cliente) => {
+    console.log('Editando cliente:', cliente);
     setNovoCliente({
       nome: cliente.nome,
       whatsapp: cliente.whatsapp || '',
       email: cliente.email || '',
       aniversario: cliente.aniversario || '',
-      recorrencia: cliente.recorrencia,
+      recorrencia: cliente.recorrencia || 'nenhuma',
       cor: cliente.cor || '#3788d8',
     });
     setEditandoCliente(cliente);
@@ -199,7 +201,6 @@ export default function ServicesManagementPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <h1 className="text-2xl font-bold mb-6">Gerenciamento de Serviços e Clientes</h1>
 
-        {/* Gerenciamento de Serviços */}
         <div className="mb-12">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Serviços</h2>
@@ -244,7 +245,6 @@ export default function ServicesManagementPage() {
           </div>
         </div>
 
-        {/* Gerenciamento de Clientes */}
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Clientes</h2>
@@ -308,7 +308,6 @@ export default function ServicesManagementPage() {
           </div>
         </div>
 
-        {/* Diálogo para Serviços */}
         <Dialog open={mostrarDialogoServico} onOpenChange={setMostrarDialogoServico}>
           <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -369,7 +368,6 @@ export default function ServicesManagementPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Diálogo para Clientes */}
         <Dialog open={mostrarDialogoCliente} onOpenChange={setMostrarDialogoCliente}>
           <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -450,10 +448,11 @@ export default function ServicesManagementPage() {
                 <Input
                   id="cor"
                   type="color"
-                  value={novoCliente.cor}
-                  onChange={(e) =>
-                    setNovoCliente({ ...novoCliente, cor: e.target.value })
-                  }
+                  value={novoCliente.cor || '#3788d8'}
+                  onChange={(e) => {
+                    console.log('Cor selecionada:', e.target.value);
+                    setNovoCliente({ ...novoCliente, cor: e.target.value });
+                  }}
                   className="h-10 w-20"
                 />
               </div>

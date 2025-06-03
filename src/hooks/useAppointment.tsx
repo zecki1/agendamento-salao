@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { appointmentService } from '@/services/appointment-service';
 import { Agendamento } from '@/types/tipos-auth';
 import { useAuth } from './useAuth';
@@ -12,8 +12,11 @@ interface AppointmentContextType {
   error: string | null;
   fetchAppointments: () => Promise<void>;
   createAppointment: (appointment: Agendamento) => Promise<void>;
+  updateAppointment: (appointment: Agendamento) => Promise<void>;
   cancelAppointment: (appointmentId: string) => Promise<void>;
 }
+
+const AppointmentContext = createContext<AppointmentContextType | undefined>(undefined);
 
 export const AppointmentProvider = ({ children }: { children: React.ReactNode }) => {
   const { user } = useAuth();
@@ -36,7 +39,7 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
     } catch (err: any) {
       console.error('Erro ao buscar agendamentos:', err);
       setError(err.message || 'Erro ao carregar agendamentos');
-      toast.error('Erro ao carregar agendamentos');
+      toast.error(err.message || 'Erro ao carregar agendamentos');
     } finally {
       setLoading(false);
     }
@@ -58,15 +61,45 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
     }
   };
 
-  const cancelAppointment = async (appointmentId: string) => {
+  const updateAppointment = async (appointment: Agendamento) => {
+    if (!user || !user.id) {
+      throw new Error('Usuário não autenticado');
+    }
+    if (!appointment.id) {
+      throw new Error('ID do agendamento é obrigatório');
+    }
     try {
-      console.log('Cancelando agendamento:', appointmentId);
-      await appointmentService.cancelarAgendamento(appointmentId);
+      console.log('Atualizando agendamento:', appointment);
+      await appointmentService.atualizarAgendamento({ ...appointment, proprietarioId: user.id });
       await fetchAppointments();
-      toast.success('Agendamento cancelado com sucesso!');
+      toast.success('Agendamento atualizado com sucesso!');
     } catch (err: any) {
-      console.error('Erro ao cancelar agendamento:', err);
-      toast.error(err.message || 'Erro ao cancelar agendamento');
+      console.error('Erro ao atualizar agendamento:', err);
+      if (err.message.includes('Documento não encontrado')) {
+        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
+      } else {
+        toast.error(err.message || 'Erro ao atualizar agendamento');
+      }
+      throw err;
+    }
+  };
+
+  const cancelAppointment = async (appointmentId: string) => {
+    if (!user || !user.id) {
+      throw new Error('Usuário não autenticado');
+    }
+    try {
+      console.log('Excluindo agendamento:', appointmentId);
+      await appointmentService.excluirAgendamento(appointmentId);
+      await fetchAppointments();
+      toast.success('Agendamento excluído com sucesso!');
+    } catch (err: any) {
+      console.error('Erro ao excluir agendamento:', err);
+      if (err.message.includes('Documento não encontrado')) {
+        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
+      } else {
+        toast.error(err.message || 'Erro ao excluir agendamento');
+      }
       throw err;
     }
   };
@@ -77,7 +110,15 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
 
   return (
     <AppointmentContext.Provider
-      value={{ appointments, loading, error, fetchAppointments, createAppointment, cancelAppointment }}
+      value={{
+        appointments,
+        loading,
+        error,
+        fetchAppointments,
+        createAppointment,
+        updateAppointment,
+        cancelAppointment,
+      }}
     >
       {children}
     </AppointmentContext.Provider>
@@ -91,7 +132,3 @@ export const useAppointment = () => {
   }
   return context;
 };
-
-import { createContext, useContext } from 'react';
-
-const AppointmentContext = createContext<AppointmentContextType | undefined>(undefined);

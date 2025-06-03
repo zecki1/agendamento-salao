@@ -62,9 +62,9 @@ export default function AgendaPage() {
     servicoId: '',
     data: '',
     hora: '',
-    duracao: 30, // Always a number
+    duracao: 30,
     profissionalId: '',
-    custo: 0, // Always a number
+    custo: 0,
     recorrencia: { frequencia: 'nenhuma' as const, dataFim: '' },
   });
   const [editandoAgendamento, setEditandoAgendamento] = useState<Agendamento | null>(null);
@@ -74,6 +74,11 @@ export default function AgendaPage() {
   const [clientesAniversario, setClientesAniversario] = useState<Cliente[]>([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+
+  // Log current date for debugging
+  useEffect(() => {
+    console.log('Data atual:', new Date().toISOString());
+  }, []);
 
   // Load data on auth change
   useEffect(() => {
@@ -191,7 +196,7 @@ export default function AgendaPage() {
   // Fetch birthday clients
   const buscarClientesAniversario = async (userId: string) => {
     try {
-      console.log('Buscando aniversariantes para userId:', userId);
+      console.log('Buscando aniversariantes para user:', userId);
       const clientes = await serviceService.getClientes(userId);
       const mesAtual = getMonth(new Date()) + 1;
       const listaAniversario = clientes.filter((cliente) => {
@@ -303,13 +308,20 @@ export default function AgendaPage() {
       };
       if (editandoAgendamento) {
         agendamento.id = editandoAgendamento.id;
-        console.log('Atualizando agendamento:', { ...agendamento, proprietarioId: user.id });
-        await appointmentService.atualizarAgendamento(agendamento);
-        toast.success('Agendamento atualizado com sucesso!');
+        console.log('Atualizando agendamento:', agendamento);
+        try {
+          await appointmentService.atualizarAgendamento(agendamento);
+          toast.success('Agendamento atualizado com sucesso!');
+        } catch (error: any) {
+          if (error.message.includes('Documento não encontrado')) {
+            toast.error('Agendamento não encontrado. Pode ter sido excluído.');
+          } else {
+            throw error;
+          }
+        }
       } else {
-        console.log('Criando agendamento:', { ...agendamento, proprietarioId: user.id });
+        console.log('Criando agendamento:', agendamento);
         await appointmentService.criarAgendamento(agendamento);
-        // Handle recurrence
         if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
           let dataAtual = new Date(validado.data);
           const dataFim = new Date(validado.recorrencia.dataFim);
@@ -321,11 +333,13 @@ export default function AgendaPage() {
                   ? addWeeks(dataAtual, 2)
                   : addMonths(dataAtual, 1);
             if (dataAtual <= dataFim) {
-              await appointmentService.criarAgendamento({
+              const recurrente: Agendamento = {
                 ...agendamento,
                 data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
                 hora: validado.hora,
-              });
+              };
+              console.log('Criando agendamento recorrente:', recurrente);
+              await createAppointment(recorrente);
             }
           }
         }
@@ -371,7 +385,11 @@ export default function AgendaPage() {
       setEditandoAgendamento(null);
     } catch (error: any) {
       console.error('Erro ao excluir agendamento:', error);
-      toast.error(error.message || 'Erro ao excluir agendamento');
+      if (error.message.includes('Documento não encontrado')) {
+        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
+      } else {
+        toast.error(error.message || 'Erro ao excluir agendamento');
+      }
     }
   };
 
@@ -466,7 +484,6 @@ export default function AgendaPage() {
       </Head>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
-        {/* Header and Financial Summary */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
             <h1 className="text-2xl font-bold">Agenda</h1>
@@ -509,7 +526,6 @@ export default function AgendaPage() {
           </div>
         </div>
 
-        {/* Birthday Notification */}
         {clientesAniversario.length > 0 && (
           <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
             <h2 className="text-lg font-semibold">🎂 Aniversariantes do Mês</h2>
@@ -526,7 +542,6 @@ export default function AgendaPage() {
           </div>
         )}
 
-        {/* Appointment Dialog */}
         <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
           <DialogContent className="sm:max-w-[425px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -690,25 +705,25 @@ export default function AgendaPage() {
                     required
                   />
                 </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="profissionalId">Profissional</Label>
-                    <Select
-                      value={novoAgendamento.profissionalId}
-                      onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, profissionalId: value })}
-                      required
-                    >
-                      <SelectTrigger id="profissionalId">
-                        <SelectValue placeholder={profissionais.length === 0 ? 'Nenhum profissional disponível' : 'Selecione o profissional'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {profissionais.map((prof) => (
-                          <SelectItem key={prof.id} value={prof.id}>
-                            {prof.nome}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="profissionalId">Profissional</Label>
+                  <Select
+                    value={novoAgendamento.profissionalId}
+                    onValueChange={(value) => setNovoAgendamento({ ...novoAgendamento, profissionalId: value })}
+                    required
+                  >
+                    <SelectTrigger id="profissionalId">
+                      <SelectValue placeholder={profissionais.length === 0 ? 'Nenhum profissional disponível' : 'Selecione o profissional'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {profissionais.map((prof) => (
+                        <SelectItem key={prof.id} value={prof.id}>
+                          {prof.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="custo">Custo (R$)</Label>
                   <Input
@@ -789,13 +804,11 @@ export default function AgendaPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Calendar Section */}
         <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
         <div className="overflow-x-auto w-full">
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView="timeGridWeek"
-            initialDate="2024-06-01"
             locale={ptLocale}
             events={agendamentos.map((event) => ({
               ...event,
@@ -840,8 +853,8 @@ export default function AgendaPage() {
               hour12: false,
             }}
             validRange={{
-              start: '2024-01-01',
-              end: '2025-12-31',
+              start: '2025-01-01',
+              end: '2027-01-01',
             }}
             allDaySlot={false}
             timeZone="America/Sao_Paulo"
