@@ -3,14 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useAppointment } from '@/hooks/useAppointment';
-import { collection, query, where, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { firestore, getFCMToken } from '@/lib/firebase';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ptLocale from '@fullcalendar/core/locales/pt';
-import { format, addDays, addWeeks, addMonths, getMonth, parse, getDay } from 'date-fns';
+import { format, addDays, addWeeks, addMonths, getMonth, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -23,7 +23,7 @@ import { UserPlusIcon, Trash2 } from 'lucide-react';
 import { serviceService } from '@/services/service';
 import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
 
-// Esquema de validação para clientes
+// Validation schema for clients
 const clienteSchema = z.object({
   nome: z.string().min(1, 'Nome é obrigatório'),
   telefone: z.string().min(1, 'Telefone é obrigatório'),
@@ -35,7 +35,7 @@ const clienteSchema = z.object({
   cor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use formato #RRGGBB)').optional(),
 });
 
-// Esquema de validação para agendamentos
+// Validation schema for appointments
 const agendamentoSchema = z.object({
   clienteId: z.string().min(1, 'Selecione um cliente'),
   servicoId: z.string().min(1, 'Selecione um serviço'),
@@ -91,10 +91,16 @@ export default function AgendaPage() {
   const [clientesAniversario, setClientesAniversario] = useState<Cliente[]>([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const [showNotificationPrompt, setShowNotificationPrompt] = useState(true);
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState<boolean | null>(null);
+  const [calendarView, setCalendarView] = useState('timeGridWeek');
 
   useEffect(() => {
-    console.log('Data atual:', new Date().toISOString());
+    const handleResize = () => {
+      setCalendarView(window.innerWidth <= 600 ? 'timeGridDay' : 'timeGridWeek');
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   useEffect(() => {
@@ -115,6 +121,8 @@ export default function AgendaPage() {
           toast.error('Usuário não encontrado. Por favor, contate o suporte.');
           return;
         }
+        const userData = userDoc.data();
+        setShowNotificationPrompt(userData.notificationsEnabled !== true);
 
         const tasks = [
           serviceService.getClientes(user.id).then((data) => {
@@ -164,7 +172,7 @@ export default function AgendaPage() {
     }
     try {
       const token = await getFCMToken();
-      console.log('FCM token obtido:', token);
+      console.log('FCM token obtido:', token ? token.slice(0, 10) + '...' : null);
       if (token) {
         const tokenRef = doc(collection(firestore, `fcmTokens/${user.id}/tokens`));
         await setDoc(tokenRef, {
@@ -173,8 +181,11 @@ export default function AgendaPage() {
           timestamp: new Date(),
           userId: user.id,
         });
-        console.log('FCM token salvo:', token);
+        const userDocRef = doc(firestore, 'users', user.id);
+        await updateDoc(userDocRef, { notificationsEnabled: true });
+        console.log('FCM token salvo e notificações habilitadas');
         toast.success('Notificações ativadas com sucesso!');
+        setShowNotificationPrompt(false);
       } else {
         console.log('Permissão de notificações não concedida ou FCM não suportado.');
         toast.info('Permissão de notificações não concedida.');
@@ -187,6 +198,23 @@ export default function AgendaPage() {
     }
   };
 
+  const handleDisableNotifications = async () => {
+    if (!user?.id) {
+      toast.error('Erro ao buscar usuário');
+      return;
+    }
+    try {
+      const userDocRef = doc(firestore, 'users', user.id);
+      await updateDoc(userDocRef, { notificationsEnabled: false });
+      console.log('Notificações desabilitadas');
+      toast.success('Notificações desabilitadas.');
+      setShowNotificationPrompt(false);
+    } catch (error) {
+      console.error('Erro ao desabilitar notificações:', error);
+      toast.error('Não foi possível desabilitar notificações.');
+    }
+  };
+
   const buscarProfissionais = async (userId: string) => {
     try {
       const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
@@ -196,7 +224,6 @@ export default function AgendaPage() {
         ...doc.data(),
       } as Profissional));
 
-      // Adicionar o próprio usuário como profissional
       const userDocRef = doc(firestore, 'users', userId);
       const userDoc = await getDoc(userDocRef);
       if (userDoc.exists()) {
@@ -275,7 +302,6 @@ export default function AgendaPage() {
 
   const handleSalvarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('novoAgendamento:', novoAgendamento);
     if (!user?.id) {
       toast.error('Erro ao buscar usuário');
       return;
@@ -301,7 +327,6 @@ export default function AgendaPage() {
               : novoAgendamento.recorrencia.dataFim,
         },
       };
-      console.log('parsedAgendamento:', parsedAgendamento);
       const validado = agendamentoSchema.parse(parsedAgendamento);
       const cliente = clientes.find((c) => c.id === validado.clienteId);
       const servico = servicos.find((s) => s.id === validado.servicoId);
@@ -310,8 +335,6 @@ export default function AgendaPage() {
         toast.error('Cliente, serviço ou profissional não encontrado.');
         return;
       }
-      const initialDate = parse(validado.data, 'yyyy-MM-dd', new Date());
-      console.log('Initial date:', initialDate.toISOString(), 'Day of week:', getDay(initialDate));
       const agendamento: Agendamento = {
         clienteId: validado.clienteId,
         nomeCliente: cliente.nome,
@@ -335,7 +358,7 @@ export default function AgendaPage() {
           await updateAppointment(agendamento);
           toast.success('Agendamento atualizado com sucesso!');
         } catch (error: any) {
-          if (error.message?.includes('Documento não encontrado')) {
+          if (error.message?.includes('not-found')) {
             console.warn('Documento não encontrado, criando novo agendamento:', agendamento.id);
             delete agendamento.id;
             await createAppointment(agendamento);
@@ -346,11 +369,9 @@ export default function AgendaPage() {
         }
       } else {
         await createAppointment(agendamento);
-        console.log('Recorrência configurada:', validado.recorrencia);
         if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
-          let dataAtual = initialDate;
+          let dataAtual = parse(validado.data, 'yyyy-MM-dd', new Date());
           const dataFim = parse(validado.recorrencia.dataFim, 'yyyy-MM-dd', new Date());
-          console.log('Iniciando loop de recorrência:', { dataAtual: dataAtual.toISOString(), dataFim: dataFim.toISOString() });
           while (dataAtual < dataFim) {
             dataAtual =
               validado.recorrencia.frequencia === 'semanal'
@@ -359,14 +380,12 @@ export default function AgendaPage() {
                   ? addWeeks(dataAtual, 2)
                   : addMonths(dataAtual, 1);
             if (dataAtual <= dataFim) {
-              console.log('Data recorrente:', dataAtual.toISOString(), 'Day of week:', getDay(dataAtual));
               const agendamentoRecorrente: Agendamento = {
                 ...agendamento,
                 data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
                 hora: validado.hora,
                 timestamp: new Date(`${format(dataAtual, 'yyyy-MM-dd', { locale: ptBR })}T${validado.hora}:00-03:00`).toISOString(),
               };
-              console.log('Criando agendamento recorrente:', agendamentoRecorrente);
               await createAppointment(agendamentoRecorrente);
             }
           }
@@ -388,7 +407,6 @@ export default function AgendaPage() {
     } catch (error: any) {
       console.error('Erro ao salvar agendamento:', error);
       if (error instanceof z.ZodError) {
-        console.log('ZodError detalhes:', error.errors);
         toast.error(error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', '));
       } else {
         toast.error(error.message || 'Erro ao salvar agendamento');
@@ -433,6 +451,10 @@ export default function AgendaPage() {
       return;
     }
     const agendamento = info.event.extendedProps;
+    if (!agendamento.id) {
+      toast.error('Agendamento inválido');
+      return;
+    }
     setNovoAgendamento({
       clienteId: agendamento.clienteId || '',
       servicoId: agendamento.servicoId || '',
@@ -454,21 +476,21 @@ export default function AgendaPage() {
   const resumoFinanceiroDiario = () => {
     const hoje = format(new Date(), 'yyyy-MM-dd', { locale: ptBR });
     const agendamentosDiarios = appointments.filter((agendamento) => agendamento.data === hoje);
-    const receitaTotal = agendamentosDiarios.reduce((soma, agendamento) => soma + agendamento.custo, 0);
+    const receitaTotal = agendamentosDiarios.reduce((soma, agendamento) => soma + (agendamento.custo || 0), 0);
     const clientesUnicos = [...new Set(agendamentosDiarios.map((agendamento) => agendamento.clienteId))].length;
     const receitasProfissionais = profissionais.map((prof) => {
       const agendamentosProf = agendamentosDiarios.filter(
         (agendamento) => agendamento.profissionalId === prof.id,
       );
       return {
-        nome: prof.nome,
-        receita: agendamentosProf.reduce((sum, agendamento) => sum + agendamento.custo, 0),
+        nome: prof.nome || 'Desconhecido',
+        receita: agendamentosProf.reduce((sum, agendamento) => sum + (agendamento.custo || 0), 0),
       };
     });
     return { receitaTotal, clientesUnicos, receitasProfissionais };
   };
 
-  if (authLoading || appointmentsLoading) {
+  if (authLoading || appointmentsLoading || carregandoDados) {
     return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
   }
 
@@ -479,13 +501,9 @@ export default function AgendaPage() {
   if (erro || appointmentsError) {
     return (
       <div className="min-h-screen flex items-center justify-center text-red-500">
-        {erro || appointmentsError?.message || 'Erro desconhecido'}
+        {erro || appointmentsError || 'Erro desconhecido'}
       </div>
     );
-  }
-
-  if (carregandoDados) {
-    return <div className="min-h-screen flex items-center justify-center">Carregando dados...</div>;
   }
 
   console.log('Estado atual:', { clientes, appointments, servicos, profissionais });
@@ -539,14 +557,14 @@ export default function AgendaPage() {
           </div>
         </div>
 
-        {showNotificationPrompt && (
+        {showNotificationPrompt === true && (
           <div className="mb-6 p-4 bg-blue-100 dark:bg-blue-900 rounded-lg">
             <h2 className="text-lg font-semibold">Ativar Notificações</h2>
             <p className="mt-2">Deseja ativar notificações para lembretes de agendamentos?</p>
             <div className="mt-4 flex gap-2">
               <Button onClick={handleEnableNotifications}>Ativar</Button>
-              <Button variant="outline" onClick={() => setShowNotificationPrompt(false)}>
-                Ignorar
+              <Button variant="outline" onClick={handleDisableNotifications}>
+                Desativar
               </Button>
             </div>
           </div>
@@ -568,6 +586,76 @@ export default function AgendaPage() {
           </div>
         )}
 
+        <h2 className="mt-6 text-lg font-semibold">Agenda</h2>
+        <div className="overflow-x-auto w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+          <FullCalendar
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView={calendarView}
+            locale={ptLocale}
+            events={appointments
+              .map((event) => {
+                const startStr = `${event.data}T${event.hora}:00-03:00`;
+                const start = new Date(startStr);
+                const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
+                return {
+                  ...event,
+                  extendedProps: event,
+                  start: isNaN(start.getTime()) ? null : start,
+                  end: isNaN(end.getTime()) ? null : end,
+                  title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
+                  backgroundColor: event.corCliente || '#3788d8',
+                };
+              })
+              .filter(
+                (event): event is Agendamento & { start: Date; end: Date } =>
+                  event.start !== null && event.end !== null,
+              )}
+            eventContent={(info) => (
+              <div
+                className="fc-event-main p-1 text-xs sm:text-sm rounded-md"
+                style={{
+                  backgroundColor: info.event.backgroundColor || '#3788d8',
+                  color: 'white',
+                  width: '100%',
+                  height: '100%',
+                }}
+              >
+                <b>{info.event.title}</b>
+              </div>
+            )}
+            slotMinTime="08:00:00"
+            slotMaxTime="21:00:00"
+            height="auto"
+            headerToolbar={{
+              left: 'prev,next today',
+              center: 'title',
+              right: 'timeGridWeek,timeGridDay',
+            }}
+            dateClick={handleDataClique}
+            eventClick={handleEventClique}
+            eventDisplay="auto"
+            slotLabelFormat={{
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }}
+            validRange={{
+              start: '2025-01-01',
+              end: '2027-01-01',
+            }}
+            allDaySlot={false}
+            timeZone="America/Sao_Paulo"
+            views={{
+              timeGridDay: {
+                titleFormat: { year: 'numeric', month: 'long', day: 'numeric' },
+              },
+              timeGridWeek: {
+                titleFormat: { year: 'numeric', month: 'long' },
+              },
+            }}
+          />
+        </div>
+
         <Dialog open={abrirDialogoAgendamento} onOpenChange={setAbrirDialogoAgendamento}>
           <DialogContent className="max-w-[90vw] sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -588,6 +676,7 @@ export default function AgendaPage() {
                   <Label htmlFor="nome">Nome</Label>
                   <Input
                     id="nome"
+                    type="text"
                     value={novoCliente.nome}
                     onChange={(e) => setNovoCliente({ ...novoCliente, nome: e.target.value })}
                     placeholder="Nome completo"
@@ -601,7 +690,7 @@ export default function AgendaPage() {
                     type="tel"
                     value={novoCliente.telefone}
                     onChange={(e) => setNovoCliente({ ...novoCliente, telefone: e.target.value })}
-                    placeholder="Ex.: +5511999999999"
+                    placeholder="Ex.: +55119xxxxxxxx"
                     required
                   />
                 </div>
@@ -612,7 +701,7 @@ export default function AgendaPage() {
                     type="email"
                     value={novoCliente.email}
                     onChange={(e) => setNovoCliente({ ...novoCliente, email: e.target.value })}
-                    placeholder="exemplo@dominio.com"
+                    placeholder="teste@exemplo.com"
                   />
                 </div>
                 <div className="grid gap-2">
@@ -625,19 +714,19 @@ export default function AgendaPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="cor">Cor do Cliente</Label>
+                  <Label htmlFor="cor">Cor</Label>
                   <Input
                     id="cor"
                     type="color"
                     value={novoCliente.cor}
                     onChange={(e) => setNovoCliente({ ...novoCliente, cor: e.target.value })}
-                    className="h-10 w-auto"
+                    className="w-20"
                   />
                 </div>
                 <div className="flex gap-2">
                   <Button type="submit">Cadastrar</Button>
                   <Button variant="outline" onClick={() => setMostrarCadastroCliente(false)}>
-                    Voltar
+                    Cancelar
                   </Button>
                 </div>
               </form>
@@ -665,7 +754,7 @@ export default function AgendaPage() {
                     <Button
                       variant="outline"
                       onClick={() => setMostrarCadastroCliente(true)}
-                      title="Cadastrar novo cliente"
+                      title="Novo cliente"
                     >
                       <UserPlusIcon className="h-4 w-4" />
                     </Button>
@@ -770,7 +859,7 @@ export default function AgendaPage() {
                         custo: e.target.value ? parseFloat(e.target.value) : 0,
                       })
                     }
-                    step="0.01"
+                    step="0"
                     min="0"
                     required
                   />
@@ -839,68 +928,6 @@ export default function AgendaPage() {
             )}
           </DialogContent>
         </Dialog>
-
-        <h2 className="mt-6 text-lg font-semibold">Agenda Semanal</h2>
-        <div className="overflow-x-auto w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-          <FullCalendar
-            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView="timeGridWeek"
-            locale={ptLocale}
-            events={appointments
-              .map((event) => {
-                const startStr = `${event.data}T${event.hora}:00-03:00`;
-                const start = new Date(startStr);
-                const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
-                return {
-                  ...event,
-                  extendedProps: event,
-                  start: isNaN(start.getTime()) ? null : start,
-                  end: isNaN(end.getTime()) ? null : end,
-                  title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
-                  backgroundColor: event.corCliente || '#3788d8',
-                };
-              })
-              .filter(
-                (event): event is Agendamento & { start: Date; end: Date } =>
-                  event.start !== null && event.end !== null,
-              )}
-            eventContent={(info) => (
-              <div
-                className="fc-event-main p-1 text-sm sm:text-xs rounded-md"
-                style={{
-                  backgroundColor: info.event.backgroundColor || '#3788d8',
-                  color: 'white',
-                  width: '100%',
-                  height: '100%',
-                }}
-              >
-                <b>{info.event.title}</b>
-              </div>
-            )}
-            slotMinTime="08:00:00"
-            slotMaxTime="21:00:00"
-            height="auto"
-            headerToolbar={{
-              left: 'prev,next today',
-              center: 'title',
-              right: 'timeGridWeek,timeGridDay',
-            }}
-            dateClick={handleDataClique}
-            eventClick={handleEventClique}
-            eventDisplay="auto"
-            slotLabelFormat={{
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            }}
-            validRange={{
-              start: '2025-01-01',
-              end: '2027-01-01',
-            }}
-            allDaySlot={false}
-            timeZone="America/Sao_Paulo"
-          />
-        </div>
       </main>
     </div>
   );
