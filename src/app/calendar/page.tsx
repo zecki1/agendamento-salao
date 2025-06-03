@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { useAppointment } from '@/hooks/useAppointment';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
 import Head from 'next/head';
@@ -10,7 +11,7 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import ptLocale from '@fullcalendar/core/locales/pt';
-import { format, addDays, addWeeks, addMonths, getMonth, parse } from 'date-fns';
+import { format, addDays, addWeeks, addMonths, getMonth, parse, add, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -21,7 +22,6 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { UserPlusIcon, Trash2 } from 'lucide-react';
 import { serviceService } from '@/services/service';
-import { appointmentService } from '@/services/appointment-service';
 import { Agendamento, Cliente, Servico, Profissional } from '@/types/tipos-auth';
 
 // Zod validation schemas
@@ -47,12 +47,15 @@ const agendamentoSchema = z.object({
   recorrencia: z.object({
     frequencia: z.enum(['nenhuma', 'semanal', 'quinzenal', 'mensal']),
     dataFim: z.string().optional(),
-  }),
+  }).refine(
+    (data) => data.frequencia === 'nenhuma' || !!data.dataFim,
+    { message: 'Data final é obrigatória para recorrências', path: ['recorrencia', 'dataFim'] }
+  ),
 });
 
 export default function AgendaPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
-  const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
+  const { appointments, loading: appointmentsLoading, error: appointmentsError, fetchAppointments, createAppointment, updateAppointment, cancelAppointment } = useAppointment();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [profissionais, setProfissionais] = useState<Profissional[]>([]);
@@ -60,8 +63,8 @@ export default function AgendaPage() {
   const [novoAgendamento, setNovoAgendamento] = useState({
     clienteId: '',
     servicoId: '',
-    data: '',
-    hora: '',
+    data: format(new Date(), 'yyyy-MM-dd', { locale: ptBR }),
+    hora: format(new Date(), 'HH:mm', { locale: ptBR }),
     duracao: 30,
     profissionalId: '',
     custo: 0,
@@ -75,14 +78,12 @@ export default function AgendaPage() {
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Log current date for debugging
   useEffect(() => {
     console.log('Data atual:', new Date().toISOString());
   }, []);
 
-  // Load data on auth change
   useEffect(() => {
-    if (authLoading || !isAuthenticated || !user || !user.id) {
+    if (authLoading || !isAuthenticated || !user?.id) {
       console.log('Autenticação incompleta:', { authLoading, isAuthenticated, user });
       setCarregandoDados(false);
       return;
@@ -99,24 +100,41 @@ export default function AgendaPage() {
           toast.error('Usuário não encontrado. Por favor, contate o suporte.');
           return;
         }
-        await Promise.all([
-          serviceService.getClientes(user.id).then((data) => {
-            console.log('Clientes carregados:', data);
-            setClientes(data);
-          }),
-          serviceService.getServicos(user.id).then((data) => {
-            console.log('Serviços carregados:', data);
-            setServicos(data);
-          }),
-          buscarProfissionais(user.id).catch((error) => {
-            console.warn('Erro ao buscar profissionais, continuando com lista vazia:', error);
-            setProfissionais([]);
-          }),
-          buscarAgendamentos(user.id),
-          buscarClientesAniversario(user.id),
-        ]);
+
+        const tasks = [
+          serviceService.getClientes(user.id)
+            .then((data) => {
+              console.log('Clientes carregados:', data);
+              setClientes(data);
+            })
+            .catch((error) => {
+              console.warn('Erro ao carregar clientes:', error);
+              setClientes([]);
+            }),
+          serviceService.getServicos(user.id)
+            .then((data) => {
+              console.log('Serviços carregados:', data);
+              setServicos(data);
+            })
+            .catch((error) => {
+              console.warn('Erro ao carregar serviços:', error);
+              setServicos([]);
+            }),
+          buscarProfissionais(user.id)
+            .catch((error) => {
+              console.warn('Erro ao carregar profissionais:', error);
+              setProfissionais([]);
+            }),
+          buscarClientesAniversario(user.id)
+            .catch((error) => {
+              console.warn('Erro ao carregar aniversariantes:', error);
+              setClientesAniversario([]);
+            }),
+        ];
+
+        await Promise.all(tasks);
       } catch (error) {
-        console.error('Erro ao carregar dados:', error);
+        console.error('Erro geral ao carregar dados:', error);
         setErro('Erro ao carregar dados. Tente novamente.');
         toast.error('Erro ao carregar dados');
       } finally {
@@ -124,108 +142,43 @@ export default function AgendaPage() {
       }
     };
     carregarDados();
-  }, [authLoading, isAuthenticated, user]);
+  }, [authLoading, isAuthenticated, user?.id]);
 
-  // Fetch professionals
   const buscarProfissionais = async (userId: string) => {
-    try {
-      console.log('Buscando profissionais para userId:', userId);
-      const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
-      const querySnapshot = await getDocs(q);
-      const listaProfissionais = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Profissional));
-      const userDocRef = doc(firestore, 'users', userId);
-      const userDoc = await getDoc(userDocRef);
-      if (userDoc.exists()) {
-        listaProfissionais.push({ id: userId, ...userDoc.data() } as Profissional);
-      }
-      setProfissionais(listaProfissionais);
-      console.log('Profissionais encontrados:', listaProfissionais);
-    } catch (error) {
-      console.error('Erro ao buscar profissionais:', error);
-      throw error;
+    const q = query(collection(firestore, 'users'), where('proprietarioId', '==', userId));
+    const querySnapshot = await getDocs(q);
+    const listaProfissionais = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Profissional));
+    const userDocRef = doc(firestore, 'users', userId);
+    const userDoc = await getDoc(userDocRef);
+    if (userDoc.exists()) {
+      listaProfissionais.push({ id: userId, ...userDoc.data() } as Profissional);
     }
+    setProfissionais(listaProfissionais);
+    console.log('Profissionais carregados:', listaProfissionais);
   };
 
-  // Fetch appointments
-  const buscarAgendamentos = async (userId: string) => {
-    try {
-      console.log('Buscando agendamentos para userId:', userId);
-      const agendamentosData = await appointmentService.obterAgendamentosUsuario(userId);
-      console.log('Dados brutos de agendamentos:', agendamentosData);
-      const listaAgendamentos = agendamentosData
-        .map((agendamento) => {
-          if (!agendamento.data || !agendamento.hora) {
-            console.warn('Agendamento inválido, faltando data ou hora:', agendamento);
-            return null;
-          }
-          const startStr = `${agendamento.data}T${agendamento.hora}:00-03:00`;
-          const start = new Date(startStr);
-          const end = new Date(start.getTime() + (agendamento.duracao || 30) * 60000);
-          const cliente = clientes.find((c) => c.id === agendamento.clienteId);
-          const event = {
-            ...agendamento,
-            start: isNaN(start.getTime()) ? null : start,
-            end: isNaN(end.getTime()) ? null : end,
-            title: `${agendamento.nomeCliente || 'Cliente'} - ${agendamento.nomeServico || 'Serviço'}`,
-            backgroundColor: agendamento.corCliente || cliente?.cor || '#3788d8',
-          };
-          console.log('Evento mapeado:', {
-            id: agendamento.id,
-            title: event.title,
-            start: event.start?.toISOString() || 'null',
-            end: event.end?.toISOString() || 'null',
-            rawData: agendamento.data,
-            rawHora: agendamento.hora,
-            duracao: agendamento.duracao,
-            backgroundColor: event.backgroundColor,
-            clienteCor: cliente?.cor,
-            agendamentoCor: agendamento.corCliente,
-          });
-          return event;
-        })
-        .filter((event): event is Agendamento => event !== null && event.start !== null && event.end !== null);
-      setAgendamentos(listaAgendamentos);
-      console.log('Agendamentos encontrados:', listaAgendamentos);
-    } catch (error) {
-      console.error('Erro ao buscar agendamentos:', error);
-      setErro('Erro ao carregar agendamentos. Verifique permissões.');
-      toast.error('Erro ao carregar agendamentos');
-    }
-  };
-
-  // Fetch birthday clients
   const buscarClientesAniversario = async (userId: string) => {
-    try {
-      console.log('Buscando aniversariantes para user:', userId);
-      const clientes = await serviceService.getClientes(userId);
-      const mesAtual = getMonth(new Date()) + 1;
-      const listaAniversario = clientes.filter((cliente) => {
-        if (!cliente.aniversario) return false;
-        const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
-        return mesAniversario === mesAtual;
-      });
-      setClientesAniversario(listaAniversario);
-      console.log('Aniversariantes encontrados:', listaAniversario);
-      if (listaAniversario.length > 0) {
-        toast.info(`🎉 ${listaAniversario.length} cliente(s) fazem aniversário este mês!`);
-      }
-    } catch (error) {
-      console.error('Erro ao buscar aniversariantes:', error);
-      throw error;
+    const clientes = await serviceService.getClientes(userId);
+    const mesAtual = getMonth(new Date()) + 1;
+    const listaAniversario = clientes.filter((cliente) => {
+      if (!cliente.aniversario) return false;
+      const mesAniversario = parse(cliente.aniversario, 'yyyy-MM-dd', new Date()).getMonth() + 1;
+      return mesAniversario === mesAtual;
+    });
+    setClientesAniversario(listaAniversario);
+    if (listaAniversario.length > 0) {
+      toast.info(`🎉 ${listaAniversario.length} cliente(s) fazem aniversário este mês!`);
     }
   };
 
-  // Create client
   const handleCriarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !user.id) {
-      console.error('Erro ao buscar usuário:', { user });
+    if (!user?.id) {
       toast.error('Erro ao buscar usuário');
       return;
     }
     try {
       const validado = clienteSchema.parse(novoCliente);
-      console.log('Dados validados do cliente:', validado);
       await serviceService.createCliente(
         {
           nome: validado.nome,
@@ -239,17 +192,14 @@ export default function AgendaPage() {
         },
         user.id,
       );
-      console.log('Cliente cadastrado com sucesso');
       setNovoCliente({ nome: '', telefone: '', email: '', aniversario: '', cor: '#3788d8' });
       const clientesData = await serviceService.getClientes(user.id);
-      console.log('Clientes atualizados:', clientesData);
       setClientes(clientesData);
       await buscarClientesAniversario(user.id);
       toast.success('Cliente cadastrado com sucesso!');
       setMostrarCadastroCliente(false);
       setAbrirDialogoAgendamento(true);
     } catch (error: any) {
-      console.error('Erro ao criar cliente:', error);
       const mensagemErro =
         error instanceof z.ZodError
           ? error.errors.map((e) => e.message).join(', ')
@@ -258,12 +208,10 @@ export default function AgendaPage() {
     }
   };
 
-  // Create or update appointment
   const handleSalvarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Tentando salvar agendamento:', novoAgendamento);
-    if (!user || !user.id) {
-      console.error('Erro ao buscar usuário:', { user });
+    console.log('novoAgendamento:', novoAgendamento);
+    if (!user?.id) {
       toast.error('Erro ao buscar usuário');
       return;
     }
@@ -273,23 +221,32 @@ export default function AgendaPage() {
         profissionalId: profissionais[0].id,
       }));
       toast.info('Profissional selecionado automaticamente.');
+      return;
     }
     try {
       const parsedAgendamento = {
         ...novoAgendamento,
         duracao: Number(novoAgendamento.duracao) || 30,
         custo: Number(novoAgendamento.custo) || 0,
+        recorrencia: {
+          ...novoAgendamento.recorrencia,
+          dataFim: novoAgendamento.recorrencia.frequencia !== 'nenhuma' && !novoAgendamento.recorrencia.dataFim
+            ? format(add(new Date(novoAgendamento.data), { months: 3 }), 'yyyy-MM-dd', { locale: ptBR })
+            : novoAgendamento.recorrencia.dataFim,
+        },
       };
+      console.log('parsedAgendamento:', parsedAgendamento);
       const validado = agendamentoSchema.parse(parsedAgendamento);
-      console.log('Dados validados do agendamento:', validado);
       const cliente = clientes.find((c) => c.id === validado.clienteId);
       const servico = servicos.find((s) => s.id === validado.servicoId);
       const profissional = profissionais.find((p) => p.id === validado.profissionalId);
       if (!cliente || !servico || !profissional) {
-        console.error('Dados inválidos:', { cliente, servico, profissional });
         toast.error('Cliente, serviço ou profissional não encontrado.');
         return;
       }
+      // Parse initial date in America/Sao_Paulo timezone
+      const initialDate = parse(validado.data, 'yyyy-MM-dd', new Date());
+      console.log('Initial date:', initialDate.toISOString(), 'Day of week:', getDay(initialDate));
       const agendamento: Agendamento = {
         clienteId: validado.clienteId,
         nomeCliente: cliente.nome,
@@ -308,23 +265,25 @@ export default function AgendaPage() {
       };
       if (editandoAgendamento) {
         agendamento.id = editandoAgendamento.id;
-        console.log('Atualizando agendamento:', agendamento);
         try {
-          await appointmentService.atualizarAgendamento(agendamento);
-          toast.success('Agendamento atualizado com sucesso!');
+          await updateAppointment(agendamento);
         } catch (error: any) {
           if (error.message.includes('Documento não encontrado')) {
-            toast.error('Agendamento não encontrado. Pode ter sido excluído.');
+            console.warn('Documento não encontrado, criando novo agendamento:', agendamento.id);
+            delete agendamento.id;
+            await createAppointment(agendamento);
+            toast.success('Agendamento criado como novo devido a ausência do original.');
           } else {
             throw error;
           }
         }
       } else {
-        console.log('Criando agendamento:', agendamento);
-        await appointmentService.criarAgendamento(agendamento);
+        await createAppointment(agendamento);
+        console.log('Recorrência:', validado.recorrencia);
         if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
-          let dataAtual = new Date(validado.data);
-          const dataFim = new Date(validado.recorrencia.dataFim);
+          let dataAtual = initialDate;
+          const dataFim = parse(validado.recorrencia.dataFim, 'yyyy-MM-dd', new Date());
+          console.log('Iniciando loop de recorrência:', { dataAtual: dataAtual.toISOString(), dataFim: dataFim.toISOString() });
           while (dataAtual < dataFim) {
             dataAtual =
               validado.recorrencia.frequencia === 'semanal'
@@ -333,71 +292,59 @@ export default function AgendaPage() {
                   ? addWeeks(dataAtual, 2)
                   : addMonths(dataAtual, 1);
             if (dataAtual <= dataFim) {
+              console.log('Data recorrente:', dataAtual.toISOString(), 'Day of week:', getDay(dataAtual));
               const recurrente: Agendamento = {
                 ...agendamento,
                 data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
                 hora: validado.hora,
               };
               console.log('Criando agendamento recorrente:', recurrente);
-              await createAppointment(recorrente);
+              await createAppointment(recurrente);
             }
           }
         }
-        toast.success('Agendamento criado com sucesso!');
       }
       setNovoAgendamento({
         clienteId: '',
         servicoId: '',
-        data: '',
-        hora: '',
+        data: format(new Date(), 'yyyy-MM-dd', { locale: ptBR }),
+        hora: format(new Date(), 'HH:mm', { locale: ptBR }),
         duracao: 30,
         profissionalId: '',
         custo: 0,
         recorrencia: { frequencia: 'nenhuma', dataFim: '' },
       });
       setEditandoAgendamento(null);
-      await buscarAgendamentos(user.id);
       setAbrirDialogoAgendamento(false);
+      toast.success(editandoAgendamento ? 'Agendamento atualizado com sucesso!' : 'Agendamento criado com sucesso!');
     } catch (error: any) {
       console.error('Erro ao salvar agendamento:', error);
       if (error instanceof z.ZodError) {
-        console.log('Detalhes do ZodError:', error.errors);
-        toast.error(error.errors.map((e) => e.message).join(', '));
+        console.log('ZodError details:', error.errors);
+        toast.error(error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', '));
       } else {
         toast.error(error.message || 'Erro ao salvar agendamento');
       }
     }
   };
 
-  // Delete appointment
   const handleExcluirAgendamento = async () => {
-    if (!editandoAgendamento || !user || !user.id) {
-      console.error('Erro ao buscar agendamento ou usuário:', { editandoAgendamento, user });
+    if (!editandoAgendamento || !user?.id) {
       toast.error('Erro ao buscar agendamento ou usuário');
       return;
     }
     try {
-      console.log('Excluindo agendamento:', { id: editandoAgendamento.id, proprietarioId: user.id });
-      await appointmentService.excluirAgendamento(editandoAgendamento.id!);
-      toast.success('Agendamento excluído com sucesso!');
-      await buscarAgendamentos(user.id);
+      await cancelAppointment(editandoAgendamento.id!);
       setAbrirDialogoAgendamento(false);
       setEditandoAgendamento(null);
+      toast.success('Agendamento excluído com sucesso!');
     } catch (error: any) {
-      console.error('Erro ao excluir agendamento:', error);
-      if (error.message.includes('Documento não encontrado')) {
-        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
-      } else {
-        toast.error(error.message || 'Erro ao excluir agendamento');
-      }
+      toast.error(error.message || 'Erro ao excluir agendamento');
     }
   };
 
-  // Handle calendar date click
   const handleDataClique = (info: { date: Date }) => {
-    console.log('Clique na data:', info.date.toISOString());
-    if (!user || !user.id) {
-      console.error('Erro ao buscar usuário:', { user });
+    if (!user?.id) {
       toast.error('Erro ao buscar usuário');
       return;
     }
@@ -412,25 +359,22 @@ export default function AgendaPage() {
     setAbrirDialogoAgendamento(true);
   };
 
-  // Handle event click
   const handleEventClique = (info: { event: { extendedProps: Agendamento } }) => {
-    console.log('Clique no evento:', info.event.extendedProps);
-    if (!user || !user.id) {
-      console.error('Erro ao buscar usuário:', { user });
+    if (!user?.id) {
       toast.error('Erro ao buscar usuário');
       return;
     }
     const agendamento = info.event.extendedProps;
     setNovoAgendamento({
-      clienteId: agendamento.clienteId,
-      servicoId: agendamento.servicoId,
-      data: agendamento.data,
-      hora: agendamento.hora,
-      duracao: agendamento.duracao,
-      profissionalId: agendamento.profissionalId,
-      custo: agendamento.custo,
+      clienteId: agendamento.clienteId || '',
+      servicoId: agendamento.servicoId || '',
+      data: agendamento.data || format(new Date(), 'yyyy-MM-dd', { locale: ptBR }),
+      hora: agendamento.hora || format(new Date(), 'HH:mm', { locale: ptBR }),
+      duracao: agendamento.duracao || 30,
+      profissionalId: agendamento.profissionalId || '',
+      custo: agendamento.custo || 0,
       recorrencia: {
-        frequencia: agendamento.recorrencia.frequencia,
+        frequencia: agendamento.recorrencia.frequencia || 'nenhuma',
         dataFim: agendamento.recorrencia.dataFim || '',
       },
     });
@@ -439,10 +383,9 @@ export default function AgendaPage() {
     setAbrirDialogoAgendamento(true);
   };
 
-  // Daily financial summary
   const resumoFinanceiroDiario = () => {
     const hoje = format(new Date(), 'yyyy-MM-dd', { locale: ptBR });
-    const agendamentosDiarios = agendamentos.filter((agendamento) => agendamento.data === hoje);
+    const agendamentosDiarios = appointments.filter((agendamento) => agendamento.data === hoje);
     const receitaTotal = agendamentosDiarios.reduce((soma, agendamento) => soma + agendamento.custo, 0);
     const clientesUnicos = [...new Set(agendamentosDiarios.map((agendamento) => agendamento.clienteId))].length;
     const receitasProfissionais = profissionais.map((prof) => {
@@ -457,7 +400,7 @@ export default function AgendaPage() {
     return { receitaTotal, clientesUnicos, receitasProfissionais };
   };
 
-  if (authLoading) {
+  if (authLoading || appointmentsLoading) {
     return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
   }
 
@@ -465,15 +408,15 @@ export default function AgendaPage() {
     return <div className="min-h-screen flex items-center justify-center">Por favor, faça login.</div>;
   }
 
-  if (erro) {
-    return <div className="min-h-screen flex items-center justify-center text-red-500">{erro}</div>;
+  if (erro || appointmentsError) {
+    return <div className="min-h-screen flex items-center justify-center text-red-500">{erro || appointmentsError}</div>;
   }
 
   if (carregandoDados) {
     return <div className="min-h-screen flex items-center justify-center">Carregando dados...</div>;
   }
 
-  console.log('Estado atual:', { clientes, servicos, profissionais, agendamentos });
+  console.log('Estado atual:', { clientes, appointments, servicos, profissionais });
 
   return (
     <div className="min-h-screen bg-background p-4 flex flex-col">
@@ -754,6 +697,7 @@ export default function AgendaPage() {
                         },
                       })
                     }
+                    required
                   >
                     <SelectTrigger id="recorrencia">
                       <SelectValue placeholder="Sem repetição" />
@@ -782,6 +726,7 @@ export default function AgendaPage() {
                           },
                         })
                       }
+                      required
                     />
                   </div>
                 )}
@@ -810,34 +755,34 @@ export default function AgendaPage() {
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView="timeGridWeek"
             locale={ptLocale}
-            events={agendamentos.map((event) => ({
-              ...event,
-              extendedProps: event,
-            }))}
-            eventContent={(info) => {
-              console.log('Renderizando evento:', {
-                id: info.event.id,
-                title: info.event.title,
-                start: info.event.start?.toISOString() || 'null',
-                end: info.event.end?.toISOString() || 'null',
-                backgroundColor: info.event.backgroundColor,
-              });
-              return (
-                <div
-                  className="fc-event-main p-1 text-sm sm:text-xs rounded-md"
-                  style={{
-                    backgroundColor: info.event.backgroundColor || '#3788d8',
-                    color: 'white',
-                    width: '100%',
-                    height: '100%',
-                  }}
-                >
-                  <b>{info.event.title}</b>
-                </div>
-              );
-            }}
+            events={appointments.map((event) => {
+              const startStr = `${event.data}T${event.hora}:00-03:00`;
+              const start = new Date(startStr);
+              const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
+              return {
+                ...event,
+                extendedProps: event,
+                start: isNaN(start.getTime()) ? null : start,
+                end: isNaN(end.getTime()) ? null : end,
+                title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
+                backgroundColor: event.corCliente || '#3788d8',
+              };
+            }).filter((event): event is Agendamento & { start: Date; end: Date } => event.start !== null && event.end !== null)}
+            eventContent={(info) => (
+              <div
+                className="fc-event-main p-1 text-sm sm:text-xs rounded-md"
+                style={{
+                  backgroundColor: info.event.backgroundColor || '#3788d8',
+                  color: 'white',
+                  width: '100%',
+                  height: '100%',
+                }}
+              >
+                <b>{info.event.title}</b>
+              </div>
+            )}
             slotMinTime="08:00:00"
-            slotMaxTime="17:00:00"
+            slotMaxTime="21:00:00"
             height="auto"
             headerToolbar={{
               left: 'prev,next today',
