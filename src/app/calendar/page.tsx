@@ -751,12 +751,12 @@ export default function AgendaPage() {
                   </div>
                 )}
                 <div className="flex gap-2">
-                  <Button type="submit">{editandoAgendamento ? 'Atualizar' : 'Agendar'}</Button>
+                    <Button className="border  text-black dark:text-white" type="submit">{editandoAgendamento ? 'Atualizar' : 'Agendar'}</Button>
                   {editandoAgendamento && (
                     <Button
                       variant="destructive"
                       onClick={handleExcluirAgendamento}
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2 border"
                     >
                       <Trash2 className="h-4 w-4" /> Excluir
                     </Button>
