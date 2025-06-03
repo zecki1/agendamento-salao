@@ -204,7 +204,7 @@ export default function ServicesManagementPage() {
         <div className="mb-12">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Serviços</h2>
-            <Button onClick={() => setMostrarDialogoServico(true)}>Novo Serviço</Button>
+            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoServico(true)}>Novo Serviço</Button>
           </div>
           <div className="overflow-x-auto">
             <Table>
@@ -248,7 +248,7 @@ export default function ServicesManagementPage() {
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Clientes</h2>
-            <Button onClick={() => setMostrarDialogoCliente(true)}>Novo Cliente</Button>
+            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoCliente(true)}>Novo Cliente</Button>
           </div>
           <div className="overflow-x-auto">
             <Table>

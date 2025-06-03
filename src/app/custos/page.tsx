@@ -221,7 +221,7 @@ export default function ReportsCostsPage() {
         <div className="mb-8">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Produtos</h2>
-            <Button onClick={() => setMostrarDialogoProduto(true)}>Novo Produto</Button>
+            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoProduto(true)}>Novo Produto</Button>
           </div>
           <Table>
             <TableHeader>
@@ -252,7 +252,7 @@ export default function ReportsCostsPage() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Uso de Produtos</h2>
-            <Button onClick={() => setMostrarDialogoUsoProduto(true)}>Registrar Uso</Button>
+            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoUsoProduto(true)}>Registrar Uso</Button>
           </div>
           <Table>
             <TableHeader>
