@@ -207,7 +207,7 @@ export default function AgendaPage() {
       }
 
       console.log('Profissionais carregados:', listaProfissionais);
-      setProfissionais(listaProfissionais); // Corrigido de listaProfissional para listaProfissionais
+      setProfissionais(listaProfissionais);
     } catch (error) {
       console.error('Erro ao buscar profissionais:', error);
       throw error;
@@ -297,7 +297,7 @@ export default function AgendaPage() {
           ...novoAgendamento.recorrencia,
           dataFim:
             novoAgendamento.recorrencia.frequencia !== 'nenhuma' && !novoAgendamento.recorrencia.dataFim
-              ? format(addDays(new Date(novoAgendamento.data), { months: 3 }), 'yyyy-MM-dd', { locale: ptBR })
+              ? format(addMonths(new Date(novoAgendamento.data), 3), 'yyyy-MM-dd', { locale: ptBR })
               : novoAgendamento.recorrencia.dataFim,
         },
       };
@@ -333,8 +333,9 @@ export default function AgendaPage() {
         agendamento.id = editandoAgendamento.id;
         try {
           await updateAppointment(agendamento);
+          toast.success('Agendamento atualizado com sucesso!');
         } catch (error: any) {
-          if (error.message.includes('Documento não encontrado')) {
+          if (error.message?.includes('Documento não encontrado')) {
             console.warn('Documento não encontrado, criando novo agendamento:', agendamento.id);
             delete agendamento.id;
             await createAppointment(agendamento);
@@ -345,7 +346,7 @@ export default function AgendaPage() {
         }
       } else {
         await createAppointment(agendamento);
-        console.log('Recorrência:', validado.recorrencia);
+        console.log('Recorrência configurada:', validado.recorrencia);
         if (validado.recorrencia.frequencia !== 'nenhuma' && validado.recorrencia.dataFim) {
           let dataAtual = initialDate;
           const dataFim = parse(validado.recorrencia.dataFim, 'yyyy-MM-dd', new Date());
@@ -359,17 +360,18 @@ export default function AgendaPage() {
                   : addMonths(dataAtual, 1);
             if (dataAtual <= dataFim) {
               console.log('Data recorrente:', dataAtual.toISOString(), 'Day of week:', getDay(dataAtual));
-              const recurrente: Agendamento = {
+              const agendamentoRecorrente: Agendamento = {
                 ...agendamento,
                 data: format(dataAtual, 'yyyy-MM-dd', { locale: ptBR }),
                 hora: validado.hora,
                 timestamp: new Date(`${format(dataAtual, 'yyyy-MM-dd', { locale: ptBR })}T${validado.hora}:00-03:00`).toISOString(),
               };
-              console.log('Criando agendamento recorrente:', recurrente);
-              await createAppointment(recorrente);
+              console.log('Criando agendamento recorrente:', agendamentoRecorrente);
+              await createAppointment(agendamentoRecorrente);
             }
           }
         }
+        toast.success('Agendamento criado com sucesso!');
       }
       setNovoAgendamento({
         clienteId: '',
@@ -383,7 +385,6 @@ export default function AgendaPage() {
       });
       setEditandoAgendamento(null);
       setAbrirDialogoAgendamento(false);
-      toast.success(editandoAgendamento ? 'Agendamento atualizado com sucesso!' : 'Agendamento criado com sucesso!');
     } catch (error: any) {
       console.error('Erro ao salvar agendamento:', error);
       if (error instanceof z.ZodError) {

@@ -57,8 +57,9 @@ export const serviceService = {
 
   // Clientes
   async getClientes(userId: string): Promise<Cliente[]> {
-    const q = query(collection(firestore, 'clients'), where('proprietarioId', '==', userId));
+    const q = collection(firestore, 'clients'); // Temporariamente sem where('proprietarioId')
     const querySnapshot = await getDocs(q);
+    console.log('Clientes brutos:', querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
   },
 
