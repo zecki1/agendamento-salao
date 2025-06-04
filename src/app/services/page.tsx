@@ -29,7 +29,7 @@ const clienteSchema = z.object({
   whatsapp: z.string().regex(/^\+?\d{10,15}$/, 'WhatsApp inválido').optional().or(z.literal('')),
   email: z.string().email('E-mail inválido').optional().or(z.literal('')),
   aniversario: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de aniversário inválida').optional().or(z.literal('')),
-  recorrencia: z.enum(['semanal', 'quinzenal', 'mensal', 'nenhuma']),
+  recorrencia: z.enum(['semanal', 'quinzenal', 'mensal', 'nenhuma']).optional().or(z.literal('')),
   cor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use formato #RRGGBB)').optional().or(z.literal('')),
 });
 
@@ -51,9 +51,13 @@ export default function ServicesManagementPage() {
   const [mostrarDialogoServico, setMostrarDialogoServico] = useState(false);
   const [mostrarDialogoCliente, setMostrarDialogoCliente] = useState(false);
   const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    if (authLoading || !isAuthenticated || !user || !user.id) return;
+    if (authLoading || !isAuthenticated || !user?.id) {
+      setCarregando(false);
+      return;
+    }
     const carregarDados = async () => {
       setCarregando(true);
       try {
@@ -61,27 +65,43 @@ export default function ServicesManagementPage() {
           serviceService.getServicos(user.id),
           serviceService.getClientes(user.id),
         ]);
+        console.log('Serviços carregados:', servicosData);
+        console.log('Clientes carregados:', clientesData);
         setServicos(servicosData);
         setClientes(clientesData);
-      } catch (error) {
+        setErro(null);
+      } catch (error: any) {
         console.error('Erro ao carregar dados:', error);
-        toast.error('Erro ao carregar dados');
+        const mensagemErro = error.message.includes('index')
+          ? `Índice do banco de dados necessário. Crie o índice no Firebase Console: ${error.message}`
+          : error.message.includes('permission-denied')
+            ? 'Permissões insuficientes para carregar dados.'
+            : 'Erro ao carregar dados';
+        setErro(mensagemErro);
+        toast.error(mensagemErro);
       } finally {
         setCarregando(false);
       }
     };
     carregarDados();
-  }, [authLoading, isAuthenticated, user]);
+  }, [authLoading, isAuthenticated, user?.id]);
 
   const handleCriarServico = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?.id) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
     try {
-      const validado = servicoSchema.parse(novoServico);
-      console.log('Salvando serviço no Firestore:', validado);
+      const validado = servicoSchema.parse({
+        ...novoServico,
+        preco: Number(novoServico.preco) || 0,
+        duracao: Number(novoServico.duracao) || 30,
+      });
       if (editandoServico) {
         await serviceService.updateServico(
           { ...validado, id: editandoServico.id, proprietarioId: user.id },
-          user.id,
+          user.id
         );
         toast.success('Serviço atualizado com sucesso!');
       } else {
@@ -93,19 +113,22 @@ export default function ServicesManagementPage() {
       setMostrarDialogoServico(false);
       const servicosData = await serviceService.getServicos(user.id);
       setServicos(servicosData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao salvar serviço:', error);
       const mensagemErro =
         error instanceof z.ZodError
           ? error.errors.map((e) => e.message).join(', ')
-          : 'Erro ao salvar serviço';
+          : error.message || 'Erro ao salvar serviço';
       toast.error(mensagemErro);
     }
   };
 
   const handleCriarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Dados antes da validação:', novoCliente);
+    if (!user?.id) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
     try {
       const validado = clienteSchema.parse(novoCliente);
       const clienteData = {
@@ -113,15 +136,15 @@ export default function ServicesManagementPage() {
         whatsapp: validado.whatsapp || '',
         email: validado.email || '',
         aniversario: validado.aniversario || '',
-        recorrencia: validado.recorrencia,
+        recorrencia: validado.recorrencia || 'nenhuma',
         cor: validado.cor || '#3788d8',
         proprietarioId: user.id,
+        receiveNotifications: true,
       };
-      console.log('Salvando cliente no Firestore:', clienteData);
       if (editandoCliente) {
         await serviceService.updateCliente(
           { ...clienteData, id: editandoCliente.id },
-          user.id,
+          user.id
         );
         toast.success('Cliente atualizado com sucesso!');
       } else {
@@ -140,12 +163,12 @@ export default function ServicesManagementPage() {
       setMostrarDialogoCliente(false);
       const clientesData = await serviceService.getClientes(user.id);
       setClientes(clientesData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao salvar cliente:', error);
       const mensagemErro =
         error instanceof z.ZodError
           ? error.errors.map((e) => e.message).join(', ')
-          : 'Erro ao salvar cliente';
+          : error.message || 'Erro ao salvar cliente';
       toast.error(mensagemErro);
     }
   };
@@ -157,7 +180,6 @@ export default function ServicesManagementPage() {
   };
 
   const handleEditarCliente = (cliente: Cliente) => {
-    console.log('Editando cliente:', cliente);
     setNovoCliente({
       nome: cliente.nome,
       whatsapp: cliente.whatsapp || '',
@@ -171,30 +193,64 @@ export default function ServicesManagementPage() {
   };
 
   const handleExcluirServico = async (id: string) => {
+    if (!user?.id) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
     try {
       await serviceService.deleteServico(id);
       toast.success('Serviço excluído com sucesso!');
       const servicosData = await serviceService.getServicos(user.id);
       setServicos(servicosData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao excluir serviço:', error);
-      toast.error('Erro ao excluir serviço');
+      toast.error(error.message || 'Erro ao excluir serviço');
     }
   };
 
   const handleExcluirCliente = async (id: string) => {
+    if (!user?.id) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
     try {
       await serviceService.deleteCliente(id);
       toast.success('Cliente excluído com sucesso!');
       const clientesData = await serviceService.getClientes(user.id);
       setClientes(clientesData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao excluir cliente:', error);
-      toast.error('Erro ao excluir cliente');
+      toast.error(error.message || 'Erro ao excluir cliente');
     }
   };
 
-  if (carregando) return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
+  if (authLoading || carregando) {
+    return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
+  }
+
+  if (!isAuthenticated || !user) {
+    return <div className="min-h-screen flex items-center justify-center">Por favor, faça login.</div>;
+  }
+
+  if (erro) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-red-500">
+        {erro}
+        {erro.includes('index') && (
+          <p>
+            <a
+              href="https://console.firebase.google.com/v1/r/project/agendamento-rosy/firestore/indexes"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Criar índice no Firebase Console
+            </a>
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -204,7 +260,9 @@ export default function ServicesManagementPage() {
         <div className="mb-12">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Serviços</h2>
-            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoServico(true)}>Novo Serviço</Button>
+            <Button className="border text-black dark:text-white" onClick={() => setMostrarDialogoServico(true)}>
+              Novo Serviço
+            </Button>
           </div>
           <div className="overflow-x-auto">
             <Table>
@@ -223,14 +281,14 @@ export default function ServicesManagementPage() {
                     <TableCell>{servico.preco.toFixed(2)}</TableCell>
                     <TableCell>{servico.duracao}</TableCell>
                     <TableCell className="flex gap-2">
-                      <Button
+                      <Button className='border text-black dark:text-white'
                         variant="ghost"
                         size="icon"
                         onClick={() => handleEditarServico(servico)}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button
+                      <Button className='border text-black dark:text-white'
                         variant="ghost"
                         size="icon"
                         onClick={() => handleExcluirServico(servico.id)}
@@ -248,7 +306,9 @@ export default function ServicesManagementPage() {
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
             <h2 className="text-lg font-semibold">Clientes</h2>
-            <Button className='border text-black dark:text-white' onClick={() => setMostrarDialogoCliente(true)}>Novo Cliente</Button>
+            <Button className="border text-black dark:text-white" onClick={() => setMostrarDialogoCliente(true)}>
+              Novo Cliente
+            </Button>
           </div>
           <div className="overflow-x-auto">
             <Table>
@@ -274,11 +334,11 @@ export default function ServicesManagementPage() {
                         ? format(
                           parse(cliente.aniversario, 'yyyy-MM-dd', new Date()),
                           'dd/MM/yyyy',
-                          { locale: ptBR },
+                          { locale: ptBR }
                         )
                         : 'N/A'}
                     </TableCell>
-                    <TableCell>{cliente.recorrencia}</TableCell>
+                    <TableCell>{cliente.recorrencia || 'Nenhuma'}</TableCell>
                     <TableCell>
                       <div
                         className="w-6 h-6 rounded-full"
@@ -288,14 +348,14 @@ export default function ServicesManagementPage() {
                     <TableCell className="flex gap-2">
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon" className='border text-black dark:text-white'
                         onClick={() => handleEditarCliente(cliente)}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon" className='border text-black dark:text-white'
                         onClick={() => handleExcluirCliente(cliente.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -320,9 +380,7 @@ export default function ServicesManagementPage() {
                 <Input
                   id="nome"
                   value={novoServico.nome}
-                  onChange={(e) =>
-                    setNovoServico({ ...novoServico, nome: e.target.value })
-                  }
+                  onChange={(e) => setNovoServico({ ...novoServico, nome: e.target.value })}
                   placeholder="Ex.: Corte de Cabelo"
                   required
                 />
@@ -363,7 +421,7 @@ export default function ServicesManagementPage() {
                   required
                 />
               </div>
-              <Button type="submit">{editandoServico ? 'Atualizar' : 'Cadastrar'}</Button>
+              <Button className='border text-black dark:text-white' type="submit">{editandoServico ? 'Atualizar' : 'Cadastrar'}</Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -380,9 +438,7 @@ export default function ServicesManagementPage() {
                 <Input
                   id="nome"
                   value={novoCliente.nome}
-                  onChange={(e) =>
-                    setNovoCliente({ ...novoCliente, nome: e.target.value })
-                  }
+                  onChange={(e) => setNovoCliente({ ...novoCliente, nome: e.target.value })}
                   placeholder="Ex.: João Silva"
                   required
                 />
@@ -392,9 +448,7 @@ export default function ServicesManagementPage() {
                 <Input
                   id="whatsapp"
                   value={novoCliente.whatsapp}
-                  onChange={(e) =>
-                    setNovoCliente({ ...novoCliente, whatsapp: e.target.value })
-                  }
+                  onChange={(e) => setNovoCliente({ ...novoCliente, whatsapp: e.target.value })}
                   placeholder="Ex.: +5511999999999"
                 />
               </div>
@@ -404,9 +458,7 @@ export default function ServicesManagementPage() {
                   id="email"
                   type="email"
                   value={novoCliente.email}
-                  onChange={(e) =>
-                    setNovoCliente({ ...novoCliente, email: e.target.value })
-                  }
+                  onChange={(e) => setNovoCliente({ ...novoCliente, email: e.target.value })}
                   placeholder="exemplo@dominio.com"
                 />
               </div>
@@ -416,13 +468,11 @@ export default function ServicesManagementPage() {
                   id="aniversario"
                   type="date"
                   value={novoCliente.aniversario}
-                  onChange={(e) =>
-                    setNovoCliente({ ...novoCliente, aniversario: e.target.value })
-                  }
+                  onChange={(e) => setNovoCliente({ ...novoCliente, aniversario: e.target.value })}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="recorrencia">Recorrência</Label>
+                <Label htmlFor="recorrencia">Recorrência (opcional)</Label>
                 <Select
                   value={novoCliente.recorrencia}
                   onValueChange={(value) =>
@@ -448,15 +498,12 @@ export default function ServicesManagementPage() {
                 <Input
                   id="cor"
                   type="color"
-                  value={novoCliente.cor || '#3788d8'}
-                  onChange={(e) => {
-                    console.log('Cor selecionada:', e.target.value);
-                    setNovoCliente({ ...novoCliente, cor: e.target.value });
-                  }}
+                  value={novoCliente.cor}
+                  onChange={(e) => setNovoCliente({ ...novoCliente, cor: e.target.value })}
                   className="h-10 w-20"
                 />
               </div>
-              <Button type="submit">{editandoCliente ? 'Atualizar' : 'Cadastrar'}</Button>
+              <Button className='border text-black dark:text-white' type="submit">{editandoCliente ? 'Atualizar' : 'Cadastrar'}</Button>
             </form>
           </DialogContent>
         </Dialog>

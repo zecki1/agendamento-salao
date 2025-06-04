@@ -19,13 +19,13 @@ interface AppointmentContextType {
 const AppointmentContext = createContext<AppointmentContextType | undefined>(undefined);
 
 export const AppointmentProvider = ({ children }: { children: React.ReactNode }) => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [appointments, setAppointments] = useState<Agendamento[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAppointments = async () => {
-    if (!user || !user.id) {
+    if (!user || !user.id || authLoading) {
       setError('Usuário não autenticado');
       setLoading(false);
       return;
@@ -38,8 +38,14 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
       setError(null);
     } catch (err: any) {
       console.error('Erro ao buscar agendamentos:', err);
-      setError(err.message || 'Erro ao carregar agendamentos');
-      toast.error(err.message || 'Erro ao carregar agendamentos');
+      let errorMessage = err.message || 'Erro ao carregar agendamentos';
+      if (err.message.includes('index')) {
+        errorMessage = 'Índice do banco de dados necessário. Por favor, crie o índice no Firebase Console.';
+      } else if (err.message.includes('permission-denied')) {
+        errorMessage = 'Permissões insuficientes para carregar agendamentos. Contate o suporte.';
+      }
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -56,7 +62,10 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
       toast.success('Agendamento criado com sucesso!');
     } catch (err: any) {
       console.error('Erro ao criar agendamento:', err);
-      toast.error(err.message || 'Erro ao criar agendamento');
+      const errorMessage = err.message.includes('permission-denied')
+        ? 'Permissões insuficientes para criar agendamento.'
+        : err.message || 'Erro ao criar agendamento';
+      toast.error(errorMessage);
       throw err;
     }
   };
@@ -75,11 +84,12 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
       toast.success('Agendamento atualizado com sucesso!');
     } catch (err: any) {
       console.error('Erro ao atualizar agendamento:', err);
-      if (err.message.includes('Documento não encontrado')) {
-        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
-      } else {
-        toast.error(err.message || 'Erro ao atualizar agendamento');
-      }
+      const errorMessage = err.message.includes('not-found')
+        ? 'Agendamento não encontrado. Pode ter sido excluído.'
+        : err.message.includes('permission-denied')
+          ? 'Permissões insuficientes para atualizar agendamento.'
+          : err.message || 'Erro ao atualizar agendamento';
+      toast.error(errorMessage);
       throw err;
     }
   };
@@ -95,18 +105,21 @@ export const AppointmentProvider = ({ children }: { children: React.ReactNode })
       toast.success('Agendamento excluído com sucesso!');
     } catch (err: any) {
       console.error('Erro ao excluir agendamento:', err);
-      if (err.message.includes('Documento não encontrado')) {
-        toast.error('Agendamento não encontrado. Pode ter sido excluído.');
-      } else {
-        toast.error(err.message || 'Erro ao excluir agendamento');
-      }
+      const errorMessage = err.message.includes('not-found')
+        ? 'Agendamento não encontrado. Pode ter sido excluído.'
+        : err.message.includes('permission-denied')
+          ? 'Permissões insuficientes para excluir agendamento.'
+          : err.message || 'Erro ao excluir agendamento';
+      toast.error(errorMessage);
       throw err;
     }
   };
 
   useEffect(() => {
-    fetchAppointments();
-  }, [user]);
+    if (!authLoading && user) {
+      fetchAppointments();
+    }
+  }, [user, authLoading]);
 
   return (
     <AppointmentContext.Provider

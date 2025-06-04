@@ -1,84 +1,152 @@
-import { collection, getDocs, addDoc, updateDoc, doc, deleteDoc, query, where } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
-import { Servico, Produto, Cliente } from '@/types/tipos-auth';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, orderBy, getDoc } from 'firebase/firestore';
+import { Servico, Cliente } from '@/types/tipos-auth';
+import { Timestamp } from 'firebase/firestore';
 
 export const serviceService = {
-  // Serviços
   async getServicos(userId: string): Promise<Servico[]> {
-    const q = query(collection(firestore, 'services'), where('proprietarioId', '==', userId));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Servico));
+    try {
+      console.log('Buscando serviços para userId:', userId);
+      const q = query(
+        collection(firestore, 'services'),
+        where('proprietarioId', '==', userId),
+        orderBy('criadoEm', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        criadoEm: doc.data().criadoEm && typeof doc.data().criadoEm.toDate === 'function'
+          ? doc.data().criadoEm.toDate()
+          : new Date(),
+      } as Servico));
+    } catch (error: any) {
+      console.error('Erro ao buscar serviços:', error);
+      throw new Error('Erro ao buscar serviços: ' + error.message);
+    }
   },
 
-  async createServico(servico: Omit<Servico, 'id'>, userId: string): Promise<string> {
-    const docRef = await addDoc(collection(firestore, 'services'), {
-      ...servico,
-      proprietarioId: userId,
-    });
-    return docRef.id;
+  async createServico(servico: Servico, userId: string): Promise<void> {
+    try {
+      console.log('Criando serviço:', servico);
+      await addDoc(collection(firestore, 'services'), {
+        ...servico,
+        proprietarioId: userId,
+        criadoEm: Timestamp.fromDate(new Date()),
+      });
+    } catch (error: any) {
+      console.error('Erro ao criar serviço:', error);
+      throw new Error('Erro ao criar serviço: ' + error.message);
+    }
   },
 
   async updateServico(servico: Servico, userId: string): Promise<void> {
-    await updateDoc(doc(firestore, 'services', servico.id), {
-      ...servico,
-      proprietarioId: userId,
-    });
+    try {
+      console.log('Atualizando serviço:', servico.id);
+      if (!servico.id) {
+        throw new Error('ID do serviço é obrigatório');
+      }
+      const docRef = doc(firestore, 'services', servico.id);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
+      await updateDoc(docRef, {
+        ...servico,
+        proprietarioId: userId,
+        atualizadoEm: Timestamp.fromDate(new Date()),
+      });
+    } catch (error: any) {
+      console.error('Erro ao atualizar serviço:', error);
+      throw new Error('Erro ao atualizar serviço: ' + error.message);
+    }
   },
 
-  async deleteServico(id: string): Promise<void> {
-    await deleteDoc(doc(firestore, 'services', id));
+  async deleteServico(servicoId: string): Promise<void> {
+    try {
+      console.log('Excluindo serviço:', servicoId);
+      const docRef = doc(firestore, 'services', servicoId);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
+      await deleteDoc(docRef);
+    } catch (error: any) {
+      console.error('Erro ao excluir serviço:', error);
+      throw new Error('Erro ao excluir serviço: ' + error.message);
+    }
   },
 
-  // Produtos
-  async getProdutos(userId: string): Promise<Produto[]> {
-    const q = query(collection(firestore, 'products'), where('proprietarioId', '==', userId));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Produto));
-  },
-
-  async createProduto(produto: Omit<Produto, 'id'>, userId: string): Promise<string> {
-    const docRef = await addDoc(collection(firestore, 'products'), {
-      ...produto,
-      proprietarioId: userId,
-    });
-    return docRef.id;
-  },
-
-  async updateProduto(produto: Produto, userId: string): Promise<void> {
-    await updateDoc(doc(firestore, 'products', produto.id), {
-      ...produto,
-      proprietarioId: userId,
-    });
-  },
-
-  async deleteProduto(id: string): Promise<void> {
-    await deleteDoc(doc(firestore, 'products', id));
-  },
-
-  // Clientes
   async getClientes(userId: string): Promise<Cliente[]> {
-    const q = collection(firestore, 'clients'); // Temporariamente sem where('proprietarioId')
-    const querySnapshot = await getDocs(q);
-    console.log('Clientes brutos:', querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Cliente));
+    try {
+      console.log('Buscando clientes para userId:', userId);
+      const q = query(
+        collection(firestore, 'clients'),
+        where('proprietarioId', '==', userId),
+        orderBy('criadoEm', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        criadoEm: doc.data().criadoEm && typeof doc.data().criadoEm.toDate === 'function'
+          ? doc.data().criadoEm.toDate()
+          : new Date(),
+      } as Cliente));
+    } catch (error: any) {
+      console.error('Erro ao buscar clientes:', error);
+      throw new Error('Erro ao buscar clientes: ' + error.message);
+    }
   },
 
-  async createCliente(cliente: Omit<Cliente, 'id'>, userId: string): Promise<string> {
-    const docRef = await addDoc(collection(firestore, 'clients'), {
-      ...cliente,
-      proprietarioId: userId,
-    });
-    return docRef.id;
+  async createCliente(cliente: Cliente, userId: string): Promise<void> {
+    try {
+      console.log('Criando cliente:', cliente);
+      await addDoc(collection(firestore, 'clients'), {
+        ...cliente,
+        proprietarioId: userId,
+        criadoEm: Timestamp.fromDate(new Date()),
+      });
+    } catch (error: any) {
+      console.error('Erro ao criar cliente:', error);
+      throw new Error('Erro ao criar cliente: ' + error.message);
+    }
   },
 
   async updateCliente(cliente: Cliente, userId: string): Promise<void> {
-    await updateDoc(doc(firestore, 'clients', cliente.id), {
-      ...cliente,
-      proprietarioId: userId,
-    });
+    try {
+      console.log('Atualizando cliente:', cliente.id);
+      if (!cliente.id) {
+        throw new Error('ID do cliente é obrigatório');
+      }
+      const docRef = doc(firestore, 'clients', cliente.id);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
+      await updateDoc(docRef, {
+        ...cliente,
+        proprietarioId: userId,
+        atualizadoEm: Timestamp.fromDate(new Date()),
+      });
+    } catch (error: any) {
+      console.error('Erro ao atualizar cliente:', error);
+      throw new Error('Erro ao atualizar cliente: ' + error.message);
+    }
   },
 
-  async deleteCliente(id: string): Promise<void> {
-    await deleteDoc(doc(firestore, 'clients', id));
+  async deleteCliente(clienteId: string): Promise<void> {
+    try {
+      console.log('Excluindo cliente:', clienteId);
+      const docRef = doc(firestore, 'clients', clienteId);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        throw new Error(`Documento não encontrado: ${docRef.path}`);
+      }
+      await deleteDoc(docRef);
+    } catch (error: any) {
+      console.error('Erro ao excluir cliente:', error);
+      throw new Error('Erro ao excluir cliente: ' + error.message);
+    }
   },
 };

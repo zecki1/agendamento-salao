@@ -348,7 +348,7 @@ export default function AgendaPage() {
         corCliente: cliente.cor || '#3788d8',
         custo: validado.custo,
         recorrencia: validado.recorrencia,
-        status: 'pending',
+        status: 'pendente',
         proprietarioId: user.id,
         timestamp: new Date(`${validado.data}T${validado.hora}:00-03:00`).toISOString(),
       };
@@ -501,12 +501,22 @@ export default function AgendaPage() {
   if (erro || appointmentsError) {
     return (
       <div className="min-h-screen flex items-center justify-center text-red-500">
-        {erro || appointmentsError || 'Erro desconhecido'}
+        {erro || appointmentsError}
+        {appointmentsError?.includes('index') && (
+          <p>
+            <a
+              href="https://console.firebase.google.com/v1/r/project/agendamento-rosy/firestore/indexes"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Criar índice no Firebase Console
+            </a>
+          </p>
+        )}
       </div>
     );
   }
-
-  console.log('Estado atual:', { clientes, appointments, servicos, profissionais });
 
   return (
     <div className="min-h-screen bg-background p-4 sm:p-6 flex flex-col">
@@ -597,19 +607,20 @@ export default function AgendaPage() {
                 const startStr = `${event.data}T${event.hora}:00-03:00`;
                 const start = new Date(startStr);
                 const end = new Date(start.getTime() + (event.duracao || 30) * 60000);
+                if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                  console.warn('Data inválida no agendamento:', event);
+                  return null;
+                }
                 return {
                   ...event,
                   extendedProps: event,
-                  start: isNaN(start.getTime()) ? null : start,
-                  end: isNaN(end.getTime()) ? null : end,
+                  start,
+                  end,
                   title: `${event.nomeCliente || 'Cliente'} - ${event.nomeServico || 'Serviço'}`,
                   backgroundColor: event.corCliente || '#3788d8',
                 };
               })
-              .filter(
-                (event): event is Agendamento & { start: Date; end: Date } =>
-                  event.start !== null && event.end !== null,
-              )}
+              .filter((event): event is NonNullable<typeof event> => event !== null)}
             eventContent={(info) => (
               <div
                 className="fc-event-main p-1 text-xs sm:text-sm rounded-md"
@@ -751,7 +762,7 @@ export default function AgendaPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button
+                    <Button className='border text-black dark:text-white'
                       variant="outline"
                       onClick={() => setMostrarCadastroCliente(true)}
                       title="Novo cliente"
